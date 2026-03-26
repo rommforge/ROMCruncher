@@ -603,14 +603,15 @@ fn get_chd_data_sha1(path: String) -> Result<String, String> {
         + &String::from_utf8_lossy(&output.stderr);
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Data SHA1:") {
-            let hash = rest.trim().to_lowercase();
+        // Match "SHA1:" but not "Data SHA1:" — DATs store the top-level SHA1.
+        if trimmed.starts_with("SHA1:") && !trimmed.starts_with("Data SHA1:") {
+            let hash = trimmed["SHA1:".len()..].trim().to_lowercase();
             if !hash.is_empty() {
                 return Ok(hash);
             }
         }
     }
-    Err("Data SHA1 not found in chdman info output".to_string())
+    Err("SHA1 not found in chdman info output".to_string())
 }
 
 /// Hash a file and return its SHA1 and CRC32 (lowercase hex).
