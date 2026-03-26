@@ -104,22 +104,17 @@ export default function CreateCHD() {
     if (datIndex.size === 0) return;
     try {
       setProgressLabel("Verifying…");
-      const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
-      setJobProgress(0);
-      try {
-        const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
-        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
-        if (match) {
-          setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
-        } else {
-          setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
-        }
-      } finally {
-        unlistenHash();
-        setJobProgress(null);
+      setJobProgress(null);
+      // CHD output files must be verified via chdman's Data SHA1, not a raw file hash.
+      const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
+      const match = datIndex.get(sha1);
+      if (match) {
+        setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
+      } else {
+        setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
       }
     } catch {
-      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not hash file" }]);
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not verify" }]);
     }
   }
 

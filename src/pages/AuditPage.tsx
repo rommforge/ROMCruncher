@@ -39,20 +39,28 @@ export default function AuditPage() {
   }
 
   async function auditOne(filePath: string): Promise<AuditResult> {
+    const isChd = filePath.split(".").pop()?.toLowerCase() === "chd";
     try {
-      const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
-      setJobProgress(0);
-      try {
-        const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
-        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
-        if (match) {
-          return { path: filePath, status: "match", gameName: match.gameName, datFile: match.datFile };
+      let match;
+      if (isChd) {
+        // DATs store the CHD Data SHA1, not a hash of the file itself.
+        const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
+        match = datIndex.get(sha1);
+      } else {
+        const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
+        setJobProgress(0);
+        try {
+          const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
+          match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+        } finally {
+          unlistenHash();
+          setJobProgress(null);
         }
-        return { path: filePath, status: "no-match" };
-      } finally {
-        unlistenHash();
-        setJobProgress(null);
       }
+      if (match) {
+        return { path: filePath, status: "match", gameName: match.gameName, datFile: match.datFile };
+      }
+      return { path: filePath, status: "no-match" };
     } catch (e) {
       return { path: filePath, status: "error", message: String(e) };
     }

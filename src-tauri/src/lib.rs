@@ -587,6 +587,32 @@ fn parse_dat(path: String) -> Result<ParsedDat, String> {
     Ok(ParsedDat { header_name, header_version, games })
 }
 
+/// For CHD files, extract the Data SHA1 reported by `chdman info`.
+/// This is what DAT files (No-Intro/Redump) store — NOT the SHA1 of the CHD file itself.
+#[tauri::command]
+fn get_chd_data_sha1(path: String) -> Result<String, String> {
+    let settings = load_settings()?;
+    if settings.chdman_path.is_empty() {
+        return Err("chdman path is not configured".to_string());
+    }
+    let output = Command::new(&settings.chdman_path)
+        .args(["info", "-i", &path])
+        .output()
+        .map_err(|e| format!("Failed to run chdman: {}", e))?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Data SHA1:") {
+            let hash = rest.trim().to_lowercase();
+            if !hash.is_empty() {
+                return Ok(hash);
+            }
+        }
+    }
+    Err("Data SHA1 not found in chdman info output".to_string())
+}
+
 /// Hash a file and return its SHA1 and CRC32 (lowercase hex).
 /// Emits `hash-progress` (0–100) events during processing.
 #[tauri::command]
@@ -662,6 +688,7 @@ pub fn run() {
             scan_dat_folder,
             parse_dat,
             hash_file,
+            get_chd_data_sha1,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
