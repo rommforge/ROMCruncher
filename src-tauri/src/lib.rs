@@ -2,8 +2,19 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
+
+fn new_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 
 fn default_theme() -> String { "dark".to_string() }
 
@@ -89,10 +100,12 @@ fn parse_chdman_progress(line: &str) -> Option<u32> {
 
 /// Spawn a thread that reads from `reader`, splitting on both \r and \n,
 /// and emits `chdman-output` (and `chdman-progress` when a percentage is found).
+/// Touches `last_activity` on every line so the stall watchdog can detect real output.
 fn spawn_output_reader<R: Read + Send + 'static>(
     reader: R,
     app: AppHandle,
     stream: &'static str,
+    last_activity: Arc<Mutex<Instant>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf_reader = std::io::BufReader::new(reader);
@@ -103,14 +116,14 @@ fn spawn_output_reader<R: Read + Send + 'static>(
             match buf_reader.read(&mut byte) {
                 Ok(0) | Err(_) => {
                     if !line_bytes.is_empty() {
-                        emit_chdman_line(&app, stream, &line_bytes);
+                        emit_chdman_line(&app, stream, &line_bytes, &last_activity);
                     }
                     break;
                 }
                 Ok(_) => match byte[0] {
                     b'\r' | b'\n' => {
                         if !line_bytes.is_empty() {
-                            emit_chdman_line(&app, stream, &line_bytes);
+                            emit_chdman_line(&app, stream, &line_bytes, &last_activity);
                             line_bytes.clear();
                         }
                     }
@@ -121,7 +134,8 @@ fn spawn_output_reader<R: Read + Send + 'static>(
     })
 }
 
-fn emit_chdman_line(app: &AppHandle, stream: &str, bytes: &[u8]) {
+fn emit_chdman_line(app: &AppHandle, stream: &str, bytes: &[u8], last_activity: &Arc<Mutex<Instant>>) {
+    *last_activity.lock().unwrap() = Instant::now();
     let line = String::from_utf8_lossy(bytes).to_string();
     if let Some(pct) = parse_chdman_progress(&line) {
         app.emit("chdman-progress", pct).ok();
@@ -151,20 +165,83 @@ async fn run_chdman(
         return Err("chdman path is not configured. Go to Settings to set it.".to_string());
     }
 
-    let mut child = Command::new(&settings.chdman_path)
+    let mut child = new_command(&settings.chdman_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to launch chdman: {}", e))?;
 
-    *state.running_pid.lock().unwrap() = Some(child.id());
+    let child_pid = child.id();
+    *state.running_pid.lock().unwrap() = Some(child_pid);
+    // Share the PID with the watchdog thread via an Arc.
+    let shared_pid: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(Some(child_pid)));
 
-    let stdout_thread = spawn_output_reader(child.stdout.take().unwrap(), app.clone(), "stdout");
-    let stderr_thread = spawn_output_reader(child.stderr.take().unwrap(), app.clone(), "stderr");
+    // Shared timestamp touched by output readers and the stall watchdog.
+    let last_activity: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
+
+    let stdout_thread = spawn_output_reader(child.stdout.take().unwrap(), app.clone(), "stdout", last_activity.clone());
+    let stderr_thread = spawn_output_reader(child.stderr.take().unwrap(), app.clone(), "stderr", last_activity.clone());
+
+    // Output file path for size-growth monitoring (present on create/extract/convert, absent on info/verify).
+    let output_path = args.windows(2)
+        .find(|w| w[0] == "-o")
+        .map(|w| std::path::PathBuf::from(&w[1]));
+
+    // Watchdog: kill the process if there is no output AND no file growth for 60 seconds.
+    const STALL_SECS: u64 = 60;
+    let done_flag = Arc::new(AtomicBool::new(false));
+    let watchdog = {
+        let done_flag    = done_flag.clone();
+        let cancel_flag  = state.cancel_flag.clone();
+        let running_pid  = shared_pid.clone();
+        let last_activity = last_activity.clone();
+        let app          = app.clone();
+        std::thread::spawn(move || {
+            let mut last_file_size: u64 = 0;
+            loop {
+                // Sleep in short bursts so we can respond quickly to done/cancel.
+                for _ in 0..10 {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if done_flag.load(Ordering::Relaxed) || cancel_flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+                // Treat output file growth as activity.
+                if let Some(ref path) = output_path {
+                    if let Ok(meta) = std::fs::metadata(path) {
+                        let size = meta.len();
+                        if size > last_file_size {
+                            last_file_size = size;
+                            *last_activity.lock().unwrap() = Instant::now();
+                        }
+                    }
+                }
+                // Kill if nothing has happened for STALL_SECS.
+                if last_activity.lock().unwrap().elapsed().as_secs() >= STALL_SECS {
+                    app.emit("chdman-output", ChdmanOutput {
+                        stream: "error".into(),
+                        line: format!("chdman stalled — no progress for {}s, killing process", STALL_SECS),
+                    }).ok();
+                    if let Some(pid) = *running_pid.lock().unwrap() {
+                        let pid_str = pid.to_string();
+                        #[cfg(target_os = "windows")]
+                        { new_command("taskkill").args(["/F", "/PID", &pid_str]).spawn().ok(); }
+                        #[cfg(not(target_os = "windows"))]
+                        { new_command("kill").args(["-9", &pid_str]).spawn().ok(); }
+                    }
+                    return;
+                }
+            }
+        })
+    };
 
     stdout_thread.join().ok();
     stderr_thread.join().ok();
+
+    // Signal the watchdog to exit before waiting on the child.
+    done_flag.store(true, Ordering::Relaxed);
+    watchdog.join().ok();
 
     let status = child.wait().map_err(|e| e.to_string())?;
     *state.running_pid.lock().unwrap() = None;
@@ -372,7 +449,7 @@ fn get_cpu_threads() -> usize {
 
 #[tauri::command]
 fn get_chdman_version(path: String) -> Result<String, String> {
-    let output = Command::new(&path)
+    let output = new_command(&path)
         .arg("--version")
         .output()
         .map_err(|e| format!("Failed to run chdman: {}", e))?;
@@ -400,9 +477,9 @@ fn cancel_chdman(state: State<'_, AppState>) -> Result<(), String> {
     let pid = *state.running_pid.lock().unwrap();
     if let Some(pid) = pid {
         #[cfg(target_os = "windows")]
-        { Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).spawn().ok(); }
+        { new_command("taskkill").args(["/F", "/PID", &pid.to_string()]).spawn().ok(); }
         #[cfg(not(target_os = "windows"))]
-        { Command::new("kill").args(["-9", &pid.to_string()]).spawn().ok(); }
+        { new_command("kill").args(["-9", &pid.to_string()]).spawn().ok(); }
     }
     Ok(())
 }
@@ -426,7 +503,7 @@ fn detect_chd_type(path: String) -> Result<String, String> {
     if settings.chdman_path.is_empty() {
         return Err("chdman path is not configured".to_string());
     }
-    let output = Command::new(&settings.chdman_path)
+    let output = new_command(&settings.chdman_path)
         .args(["info", "-i", &path])
         .output()
         .map_err(|e| format!("Failed to run chdman: {}", e))?;
@@ -595,7 +672,7 @@ fn get_chd_data_sha1(path: String) -> Result<String, String> {
     if settings.chdman_path.is_empty() {
         return Err("chdman path is not configured".to_string());
     }
-    let output = Command::new(&settings.chdman_path)
+    let output = new_command(&settings.chdman_path)
         .args(["info", "-i", &path])
         .output()
         .map_err(|e| format!("Failed to run chdman: {}", e))?;
@@ -655,6 +732,11 @@ async fn hash_file(app: AppHandle, path: String) -> Result<FileHashes, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn delete_file(path: String) -> Result<(), String> {
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete \"{}\": {}", path, e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ensure input / output / temp / dat folders exist next to the executable.
@@ -690,6 +772,7 @@ pub fn run() {
             parse_dat,
             hash_file,
             get_chd_data_sha1,
+            delete_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
