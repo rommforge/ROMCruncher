@@ -1,0 +1,58 @@
+import type { ReactNode } from "react";
+import type { Page } from "../App";
+
+interface NavItem {
+  id: Page;
+  label: string;
+  icon: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { id: "create",   label: "Create CHD",  icon: "⊕" },
+  { id: "extract",  label: "Extract CHD", icon: "⊖" },
+  { id: "convert",  label: "Convert CHD", icon: "↻" },
+  { id: "info",     label: "Info",        icon: "ℹ" },
+  { id: "verify",   label: "Verify",      icon: "✓" },
+];
+
+interface LayoutProps {
+  currentPage: Page;
+  onNavigate: (page: Page) => void;
+  children: ReactNode;
+}
+
+export default function Layout({ currentPage, onNavigate, children }: LayoutProps) {
+  return (
+    <>
+      <aside className="sidebar">
+        <div className="sidebar-logo">
+          romm<span>CHD</span>
+        </div>
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map((item) => (
+            <div
+              key={item.id}
+              className={`nav-item ${currentPage === item.id ? "active" : ""}`}
+              onClick={() => onNavigate(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              {item.label}
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div
+            className={`nav-item ${currentPage === "settings" ? "active" : ""}`}
+            onClick={() => onNavigate("settings")}
+          >
+            <span className="nav-icon">⚙</span>
+            Settings
+          </div>
+        </div>
+      </aside>
+      <main className="main-content">
+        <div className="page-content">{children}</div>
+      </main>
+    </>
+  );
+}
