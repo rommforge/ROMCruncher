@@ -19,10 +19,10 @@ function App() {
   useEffect(() => {
     invoke<{ theme: string }>("get_settings")
       .then((s) => {
-        document.documentElement.dataset.theme = s.theme || "dark";
+        document.documentElement.dataset.theme = s.theme || "auto";
       })
       .catch(() => {
-        document.documentElement.dataset.theme = "dark";
+        document.documentElement.dataset.theme = "auto";
       });
   }, []);
 

@@ -19,7 +19,7 @@ function applyTheme(t: string) {
 
 export default function Settings() {
   const [path, setPath] = useState("");
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState("auto");
   const [status, setStatus] = useState<"idle" | "saved" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [chdmanVersion, setChdmanVersion] = useState<string | null>(null);
@@ -27,7 +27,7 @@ export default function Settings() {
   useEffect(() => {
     invoke<Settings>("get_settings").then((s) => {
       setPath(s.chdman_path);
-      setTheme(s.theme || "dark");
+      setTheme(s.theme || "auto");
       if (s.chdman_path.trim()) fetchVersion(s.chdman_path);
     }).catch(() => {});
   }, []);

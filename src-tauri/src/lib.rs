@@ -16,7 +16,7 @@ fn new_command(program: &str) -> Command {
     cmd
 }
 
-fn default_theme() -> String { "dark".to_string() }
+fn default_theme() -> String { "auto".to_string() }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Settings {
