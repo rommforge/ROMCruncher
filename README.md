@@ -65,7 +65,7 @@ The compiled executable will be at `src-tauri/target/release/romcruncher.exe`.
 
 ROMCruncher draws heavy inspiration from:
 
-- [namDHC](https://github.com/umageddon/namDHC/releases) by umageddon
+- [namDHC](https://github.com/umageddon/namDHC/) by umageddon
 - [Compressatorium](https://github.com/pacnpal/compressatorium) by pacnpal
 
 ### Built on the shoulders of
