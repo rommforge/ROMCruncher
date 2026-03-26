@@ -510,10 +510,32 @@ fn scan_dat_folder() -> Result<Vec<String>, String> {
     Ok(files)
 }
 
+/// Strip a `<!DOCTYPE ...>` declaration from XML content.
+/// roxmltree does not support DTD/DOCTYPE and returns an error when it encounters one.
+/// No-Intro and Redump DAT files always include a DOCTYPE line.
+fn strip_doctype(xml: &str) -> String {
+    let Some(start) = xml.find("<!DOCTYPE") else {
+        return xml.to_string();
+    };
+    let rest = &xml[start..];
+    let mut depth: i32 = 0;
+    let mut end = start;
+    for (i, c) in rest.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth -= 1,
+            '>' if depth <= 0 => { end = start + i + 1; break; }
+            _ => {}
+        }
+    }
+    format!("{}{}", &xml[..start], &xml[end..])
+}
+
 /// Parse a No-Intro / Redump / TOSEC DAT file (XML format).
 #[tauri::command]
 fn parse_dat(path: String) -> Result<ParsedDat, String> {
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let content = strip_doctype(&raw);
     let doc = roxmltree::Document::parse(&content).map_err(|e| e.to_string())?;
 
     let root = doc.root_element();

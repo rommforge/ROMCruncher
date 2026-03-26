@@ -14,7 +14,7 @@ interface AuditResult {
 }
 
 export default function AuditPage() {
-  const { datIndex, datInfos, loading, refreshDats } = useDat();
+  const { datIndex, datInfos, parseErrors, loading, refreshDats } = useDat();
 
   const [filePaths, setFilePaths] = useState<string[]>([]);
   const [results, setResults] = useState<AuditResult[]>([]);
@@ -101,11 +101,19 @@ export default function AuditPage() {
             ↺ Refresh
           </button>
         </div>
-        {datInfos.length === 0 ? (
+        {parseErrors.length > 0 && (
+          <div className="audit-parse-errors">
+            {parseErrors.map((e, i) => (
+              <div key={i} className="audit-parse-error">⚠ {e}</div>
+            ))}
+          </div>
+        )}
+        {datInfos.length === 0 && parseErrors.length === 0 && (
           <p className="audit-dats-empty">
             No DAT files found. Place <code>.dat</code> or <code>.xml</code> files in the <code>dat/</code> folder next to the app executable.
           </p>
-        ) : (
+        )}
+        {datInfos.length > 0 && (
           <div className="audit-dat-list">
             {datInfos.map((d: DatInfo) => (
               <div key={d.filePath} className="audit-dat-item">

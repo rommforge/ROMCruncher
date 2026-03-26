@@ -22,6 +22,7 @@ export type DatIndex = Map<string, DatMatch>;
 interface DatContextValue {
   datIndex: DatIndex;
   datInfos: DatInfo[];
+  parseErrors: string[];
   loading: boolean;
   refreshDats: () => void;
 }
@@ -29,6 +30,7 @@ interface DatContextValue {
 const DatContext = createContext<DatContextValue>({
   datIndex: new Map(),
   datInfos: [],
+  parseErrors: [],
   loading: false,
   refreshDats: () => {},
 });
@@ -38,9 +40,10 @@ interface DatGame { name: string; description: string; roms: DatRom[] }
 interface ParsedDat { header_name: string; header_version: string; games: DatGame[] }
 
 export function DatProvider({ children }: { children: ReactNode }) {
-  const [datIndex, setDatIndex] = useState<DatIndex>(new Map());
-  const [datInfos, setDatInfos] = useState<DatInfo[]>([]);
-  const [loading, setLoading]   = useState(false);
+  const [datIndex, setDatIndex]       = useState<DatIndex>(new Map());
+  const [datInfos, setDatInfos]       = useState<DatInfo[]>([]);
+  const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [loading, setLoading]         = useState(false);
 
   const refreshDats = useCallback(async () => {
     setLoading(true);
@@ -48,6 +51,7 @@ export function DatProvider({ children }: { children: ReactNode }) {
       const paths = await invoke<string[]>("scan_dat_folder");
       const index: DatIndex = new Map();
       const infos: DatInfo[] = [];
+      const errors: string[] = [];
 
       for (const p of paths) {
         try {
@@ -72,13 +76,14 @@ export function DatProvider({ children }: { children: ReactNode }) {
             headerVersion: parsed.header_version,
             entryCount:    count,
           });
-        } catch {
-          // skip unparseable DAT
+        } catch (e) {
+          errors.push(`${basename(p)}: ${String(e)}`);
         }
       }
 
       setDatIndex(index);
       setDatInfos(infos);
+      setParseErrors(errors);
     } catch {
       // dat folder not available yet
     } finally {
@@ -89,7 +94,7 @@ export function DatProvider({ children }: { children: ReactNode }) {
   useEffect(() => { refreshDats(); }, [refreshDats]);
 
   return (
-    <DatContext.Provider value={{ datIndex, datInfos, loading, refreshDats }}>
+    <DatContext.Provider value={{ datIndex, datInfos, parseErrors, loading, refreshDats }}>
       {children}
     </DatContext.Provider>
   );

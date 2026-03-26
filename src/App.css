@@ -721,6 +721,18 @@ html, body, #root {
   font-size: 11px;
 }
 
+.audit-parse-errors {
+  margin-bottom: 8px;
+}
+
+.audit-parse-error {
+  font-size: 11px;
+  color: var(--error);
+  padding: 2px 0;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
 .audit-no-dat-warn {
   font-size: 12px;
   color: var(--warning);
