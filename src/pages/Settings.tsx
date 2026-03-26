@@ -64,7 +64,7 @@ export default function Settings() {
     <div className="settings-section" style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Configure RomMForge to find your chdman binary.</p>
+        <p className="page-subtitle">Configure ROMCruncher to find your chdman binary.</p>
       </div>
 
       <div className="settings-card">
@@ -117,7 +117,7 @@ export default function Settings() {
       </div>
 
       <div className="settings-card">
-        <div className="settings-card-title">About RomMForge</div>
+        <div className="settings-card-title">About ROMCruncher</div>
         <div className="settings-card-desc" style={{ marginBottom: 0 }}>
           A cross-platform GUI wrapper for <strong>chdman</strong> — the CHD (Compressed
           Hunks of Data) manager included with MAME. Supports creating and extracting

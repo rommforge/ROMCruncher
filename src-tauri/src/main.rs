@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    rommforge_lib::run()
+    romcruncher_lib::run()
 }

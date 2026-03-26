@@ -63,7 +63,8 @@ function buildArgs(mediaType: string, inputPath: string, outDir: string, opts: R
   const out = outputPath(inputPath, ".chd", outDir);
   const args = [cmd, "-i", inputPath, "-o", out];
   if (opts.compression) args.push("-c", opts.compression);
-  if (opts.hunksize)    args.push("-hs", opts.hunksize);
+  const hunksize = opts.hunksize || (mediaType === "dvd" ? "2048" : "");
+  if (hunksize) args.push("-hs", hunksize);
   if (opts.processors)  args.push("-np", opts.processors);
   if (mediaType === "hd"  && opts.sectorsize) args.push("-ss", opts.sectorsize);
   if (mediaType === "raw" && opts.sectorsize) args.push("-us", opts.sectorsize);
@@ -85,6 +86,8 @@ export default function CreateCHD() {
     }).catch(() => {});
     invoke<number>("get_cpu_threads").then(setMaxThreads).catch(() => {});
   }, []);
+
+  const [mediaTypeOverride, setMediaTypeOverride] = useState("auto");
 
   const [lines, setLines]         = useState<OutputLine[]>([]);
   const [running, setRunning]     = useState(false);
@@ -147,7 +150,7 @@ export default function CreateCHD() {
   }
 
   async function runOne(imagePath: string): Promise<{ ok: boolean; outputPath: string }> {
-    const mediaType = await detectSourceType(imagePath);
+    const mediaType = mediaTypeOverride !== "auto" ? mediaTypeOverride : await detectSourceType(imagePath);
     const out = outputPath(imagePath, ".chd", outDir);
     const args = buildArgs(mediaType, imagePath, outDir, opts);
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
@@ -327,6 +330,23 @@ export default function CreateCHD() {
         <div className="form-section-title">Options</div>
 
         <div className="options-grid">
+          <div className="form-group">
+            <label className="form-label">Media Type Override</label>
+            <select
+              className="form-input"
+              value={mediaTypeOverride}
+              onChange={(e) => setMediaTypeOverride(e.currentTarget.value)}
+              disabled={running}
+            >
+              <option value="auto">Auto-detect</option>
+              <option value="cd">CD-ROM</option>
+              <option value="dvd">DVD-ROM</option>
+              <option value="hd">Hard Disk</option>
+              <option value="raw">Raw</option>
+              <option value="ld">LaserDisc</option>
+            </select>
+          </div>
+
           <div className="form-group">
             <label className="form-label">Compression</label>
             <input

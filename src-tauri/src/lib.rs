@@ -43,7 +43,7 @@ pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
 }
 
-/// Returns the directory containing the RomMForge executable.
+/// Returns the directory containing the ROMCruncher executable.
 /// All persistent data (settings, temp files) lives here so the app is portable.
 fn exe_dir() -> Result<std::path::PathBuf, String> {
     std::env::current_exe()
@@ -498,29 +498,33 @@ fn get_file_size(path: String) -> Result<u64, String> {
 /// Detect the media type of a CHD file by inspecting `chdman info` output.
 /// Returns "cd", "dvd", "hd", or "raw".
 #[tauri::command]
-fn detect_chd_type(path: String) -> Result<String, String> {
+async fn detect_chd_type(path: String) -> Result<String, String> {
     let settings = load_settings()?;
     if settings.chdman_path.is_empty() {
         return Err("chdman path is not configured".to_string());
     }
-    let output = new_command(&settings.chdman_path)
-        .args(["info", "-i", &path])
-        .output()
-        .map_err(|e| format!("Failed to run chdman: {}", e))?;
-    let text = String::from_utf8_lossy(&output.stdout).to_string()
-        + &String::from_utf8_lossy(&output.stderr);
-    // Match known CHD metadata tags to determine disc type.
-    if text.contains("CHCD") || text.contains("CHT2") || text.contains("GDDD") || text.contains("GDTR") {
-        Ok("cd".to_string())
-    } else if text.contains("DVDM") {
-        Ok("dvd".to_string())
-    } else if text.contains("AVAV") {
-        Ok("ld".to_string())
-    } else if text.contains("IDNT") || text.contains("PTBL") {
-        Ok("hd".to_string())
-    } else {
-        Ok("raw".to_string())
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = new_command(&settings.chdman_path)
+            .args(["info", "-i", &path])
+            .output()
+            .map_err(|e| format!("Failed to run chdman: {}", e))?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        // Match known CHD metadata tags to determine disc type.
+        if text.contains("CHCD") || text.contains("CHT2") || text.contains("GDDD") || text.contains("GDTR") {
+            Ok("cd".to_string())
+        } else if text.contains("DVDM") {
+            Ok("dvd".to_string())
+        } else if text.contains("AVAV") {
+            Ok("ld".to_string())
+        } else if text.contains("IDNT") || text.contains("PTBL") {
+            Ok("hd".to_string())
+        } else {
+            Ok("raw".to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -667,28 +671,32 @@ fn parse_dat(path: String) -> Result<ParsedDat, String> {
 /// For CHD files, extract the Data SHA1 reported by `chdman info`.
 /// This is what DAT files (No-Intro/Redump) store — NOT the SHA1 of the CHD file itself.
 #[tauri::command]
-fn get_chd_data_sha1(path: String) -> Result<String, String> {
+async fn get_chd_data_sha1(path: String) -> Result<String, String> {
     let settings = load_settings()?;
     if settings.chdman_path.is_empty() {
         return Err("chdman path is not configured".to_string());
     }
-    let output = new_command(&settings.chdman_path)
-        .args(["info", "-i", &path])
-        .output()
-        .map_err(|e| format!("Failed to run chdman: {}", e))?;
-    let text = String::from_utf8_lossy(&output.stdout).to_string()
-        + &String::from_utf8_lossy(&output.stderr);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        // Match "SHA1:" but not "Data SHA1:" — DATs store the top-level SHA1.
-        if trimmed.starts_with("SHA1:") && !trimmed.starts_with("Data SHA1:") {
-            let hash = trimmed["SHA1:".len()..].trim().to_lowercase();
-            if !hash.is_empty() {
-                return Ok(hash);
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = new_command(&settings.chdman_path)
+            .args(["info", "-i", &path])
+            .output()
+            .map_err(|e| format!("Failed to run chdman: {}", e))?;
+        let text = String::from_utf8_lossy(&output.stdout).to_string()
+            + &String::from_utf8_lossy(&output.stderr);
+        for line in text.lines() {
+            let trimmed = line.trim();
+            // Match "SHA1:" but not "Data SHA1:" — DATs store the top-level SHA1.
+            if trimmed.starts_with("SHA1:") && !trimmed.starts_with("Data SHA1:") {
+                let hash = trimmed["SHA1:".len()..].trim().to_lowercase();
+                if !hash.is_empty() {
+                    return Ok(hash);
+                }
             }
         }
-    }
-    Err("SHA1 not found in chdman info output".to_string())
+        Err("SHA1 not found in chdman info output".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Hash a file and return its SHA1 and CRC32 (lowercase hex).

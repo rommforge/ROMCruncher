@@ -27,7 +27,7 @@ export default function Layout({ currentPage, onNavigate, children }: LayoutProp
     <>
       <aside className="sidebar">
         <div className="sidebar-logo">
-          RomM<span>Forge</span>
+          ROM<span>Cruncher</span>
         </div>
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item) => (

@@ -1,4 +1,6 @@
-# RomMForge
+# ROMCruncher
+
+> **Disclaimer:** This application was entirely vibe coded using [Claude AI](https://claude.ai). The author has no formal software development experience or background. While good-faith efforts have been made to ensure this tool only does what it is designed to do, bugs and unintended behavior are possible. **Always back up your data before converting anything.**
 
 A GUI frontend for [chdman](https://docs.mamedev.org/tools/chdman.html), the CHD file utility from MAME. Built with Tauri v2, React 19, and TypeScript.
 
@@ -40,7 +42,7 @@ After every batch Create/Extract/Convert run, a summary table shows each file's 
 
 ## Setup
 
-1. Download or build `rommforge.exe`
+1. Download or build `romcruncher.exe`
 2. Place it in a folder — the app creates `input/`, `output/`, `temp/`, and `dat/` subfolders automatically
 3. Open **Settings** and set the path to `chdman.exe` (available as part of a MAME installation)
 4. Optionally drop DAT files into the `dat/` subfolder
@@ -57,7 +59,21 @@ npm install
 npm run tauri build
 ```
 
-The compiled executable will be at `src-tauri/target/release/rommforge.exe`.
+The compiled executable will be at `src-tauri/target/release/romcruncher.exe`.
+
+## Acknowledgements
+
+ROMCruncher draws heavy inspiration from:
+
+- [namDHC](https://github.com/umageddon/namDHC/releases) by umageddon
+- [Compressatorium](https://github.com/pacnpal/compressatorium) by pacnpal
+
+### Built on the shoulders of
+
+ROMCruncher would not be possible without:
+
+- [MAME](https://github.com/mamedev/mame/) — the source of `chdman`, the engine that powers all CHD operations
+- [MAMERedump](https://github.com/MetalSlug/MAMERedump) — the DAT resources that make disc image auditing possible
 
 ## Tech Stack
 
