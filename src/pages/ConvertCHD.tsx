@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import BatchFileList, { type FileEntry } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
+import { useDat } from "../context/DatContext";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
 
@@ -53,8 +54,33 @@ export default function ConvertCHD() {
     invoke<number>("get_cpu_threads").then(setMaxThreads).catch(() => {});
   }, []);
 
+  const { datIndex } = useDat();
   const cancelledRef = useRef(false);
+  const [force, setForce] = useState(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
+
+  async function checkDat(filePath: string) {
+    if (datIndex.size === 0) return;
+    try {
+      setProgressLabel("Verifying…");
+      const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
+      setJobProgress(0);
+      try {
+        const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
+        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+        if (match) {
+          setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
+        } else {
+          setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        }
+      } finally {
+        unlistenHash();
+        setJobProgress(null);
+      }
+    } catch {
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not hash file" }]);
+    }
+  }
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
@@ -97,7 +123,7 @@ export default function ConvertCHD() {
     }
   }
 
-  async function convertOne(inputPath: string): Promise<boolean> {
+  async function convertOne(inputPath: string): Promise<{ ok: boolean; outputPath: string }> {
     let mediaType = "cd";
     try {
       mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
@@ -109,21 +135,23 @@ export default function ConvertCHD() {
     const tempDir = await invoke<string>("create_temp_dir");
     const s = sep(inputPath);
     const intermediatePath = `${tempDir}${s}${basenameNoExt(inputPath)}${intExt}`;
-    const outputPath = outputChdPath(inputPath, outDir);
+    const out = outputChdPath(inputPath, outDir);
 
     try {
       setLines((prev) => [...prev, { stream: "info", line: `→ Step 1/2: Extracting to ${intExt}…` }]);
       const extractArgs = [EXTRACT_CMD[mediaType] ?? "extractcd", "-i", inputPath, "-o", intermediatePath];
       setLines((prev) => [...prev, { stream: "info", line: `> chdman ${extractArgs.join(" ")}` }]);
-      if (!(await runChdman(extractArgs, "Extracting… (1/2)"))) return false;
+      if (!(await runChdman(extractArgs, "Extracting… (1/2)"))) return { ok: false, outputPath: out };
 
       setLines((prev) => [...prev, { stream: "info", line: `→ Step 2/2: Re-encoding to CHD…` }]);
-      const createArgs = [CREATE_CMD[mediaType] ?? "createcd", "-i", intermediatePath, "-o", outputPath];
+      const createArgs = [CREATE_CMD[mediaType] ?? "createcd", "-i", intermediatePath, "-o", out];
       if (opts.compression) createArgs.push("-c", opts.compression);
       if (opts.hunksize)    createArgs.push("-hs", opts.hunksize);
       if (opts.processors)  createArgs.push("-np", opts.processors);
+      if (force)            createArgs.push("-f");
       setLines((prev) => [...prev, { stream: "info", line: `> chdman ${createArgs.join(" ")}` }]);
-      return await runChdman(createArgs, "Re-encoding… (2/2)");
+      const ok = await runChdman(createArgs, "Re-encoding… (2/2)");
+      return { ok, outputPath: out };
     } finally {
       await invoke("cleanup_dir", { dir: tempDir }).catch(() => {});
     }
@@ -155,7 +183,9 @@ export default function ConvertCHD() {
         { stream: "info", line: `\n[${i + 1}/${files.length}] ${file.path}` },
       ]);
 
-      const ok = await convertOne(file.path);
+      const result = await convertOne(file.path);
+      const ok = result.ok;
+      if (ok) await checkDat(result.outputPath);
       updateFileStatus(file.id, ok ? "success" : "error");
       if (!ok) allOk = false;
       setProgress({ done: i + 1, total: files.length });
@@ -242,6 +272,18 @@ export default function ConvertCHD() {
               onChange={(e) => setOpt("hunksize", e.currentTarget.value)}
               disabled={running}
             />
+          </div>
+
+          <div className="form-group form-group-check">
+            <label className="form-check">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.currentTarget.checked)}
+                disabled={running}
+              />
+              Overwrite existing files
+            </label>
           </div>
         </div>
       </div>

@@ -218,6 +218,27 @@ html, body, #root {
   gap: 6px;
 }
 
+.form-group-check {
+  justify-content: flex-end;
+}
+
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.form-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .form-label {
   font-size: 12px;
   font-weight: 500;
@@ -638,6 +659,153 @@ html, body, #root {
 .theme-btn:last-child { border-right: none; }
 .theme-btn:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
 .theme-btn.active { background: var(--accent-dim); color: var(--accent); }
+
+/* ── DAT Audit page ─────────────────── */
+.audit-dats-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.audit-dats-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.audit-dats-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.audit-dats-empty code {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-style: normal;
+}
+
+.audit-dat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.audit-dat-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-dat-item:last-child { border-bottom: none; }
+
+.audit-dat-name {
+  color: var(--text-primary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.audit-dat-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.audit-no-dat-warn {
+  font-size: 12px;
+  color: var(--warning);
+  margin-left: 8px;
+}
+
+.audit-results {
+  margin-top: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.audit-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.audit-summary {
+  display: flex;
+  gap: 12px;
+}
+
+.audit-count {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.audit-count.match    { color: var(--success); }
+.audit-count.no-match { color: var(--text-secondary); }
+.audit-count.error    { color: var(--error); }
+
+.audit-result-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.audit-result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.audit-result-row:last-child { border-bottom: none; }
+
+.audit-result-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.audit-result-row.match    .audit-result-icon { color: var(--success); }
+.audit-result-row.no-match .audit-result-icon { color: var(--text-muted); }
+.audit-result-row.error    .audit-result-icon { color: var(--error); }
+
+.audit-result-path {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-result-detail {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-result-row.match    .audit-result-detail { color: var(--success); }
+.audit-result-row.error    .audit-result-detail { color: var(--error); }
 
 /* ── Scrollbars ─────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

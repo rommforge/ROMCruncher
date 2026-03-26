@@ -8,11 +8,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { id: "info",     label: "CHD Info",    icon: "ℹ" },
   { id: "create",   label: "Create CHD",  icon: "⊕" },
   { id: "extract",  label: "Extract CHD", icon: "⊖" },
   { id: "convert",  label: "Convert CHD", icon: "↻" },
-  { id: "info",     label: "Info",        icon: "ℹ" },
-  { id: "verify",   label: "Verify",      icon: "✓" },
+  { id: "verify",   label: "Verify CHD",  icon: "✓" },
+  { id: "audit",    label: "DAT Audit",   icon: "≡" },
 ];
 
 interface LayoutProps {

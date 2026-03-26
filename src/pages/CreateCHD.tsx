@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
+import { useDat } from "../context/DatContext";
 
 const ALL_FILTERS = [{ name: "Disc/Disk Images", extensions: ["cue", "gdi", "iso", "raw", "img", "bin", "avi"] }];
 const ALL_FOLDER_EXTS = ["cue", "gdi", "iso", "raw", "img", "bin", "avi"];
@@ -63,7 +64,9 @@ function buildArgs(mediaType: string, inputPath: string, outDir: string, opts: R
   if (opts.compression) args.push("-c", opts.compression);
   if (opts.hunksize)    args.push("-hs", opts.hunksize);
   if (opts.processors)  args.push("-np", opts.processors);
-  if ((mediaType === "hd" || mediaType === "raw") && opts.sectorsize) args.push("-ss", opts.sectorsize);
+  if (mediaType === "hd"  && opts.sectorsize) args.push("-ss", opts.sectorsize);
+  if (mediaType === "raw" && opts.sectorsize) args.push("-us", opts.sectorsize);
+  if (opts.force === "1") args.push("-f");
   return args;
 }
 
@@ -89,6 +92,7 @@ export default function CreateCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
+  const { datIndex } = useDat();
   const cancelledRef = useRef(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
@@ -96,13 +100,37 @@ export default function CreateCHD() {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
   }
 
+  async function checkDat(filePath: string) {
+    if (datIndex.size === 0) return;
+    try {
+      setProgressLabel("Verifying…");
+      const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
+      setJobProgress(0);
+      try {
+        const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
+        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+        if (match) {
+          setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
+        } else {
+          setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        }
+      } finally {
+        unlistenHash();
+        setJobProgress(null);
+      }
+    } catch {
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not hash file" }]);
+    }
+  }
+
   async function handleBrowseOutDir() {
     const result = await open({ directory: true, multiple: false, defaultPath: outDir || undefined });
     if (result && !Array.isArray(result)) setOutDir(result);
   }
 
-  async function runOne(imagePath: string): Promise<boolean> {
+  async function runOne(imagePath: string): Promise<{ ok: boolean; outputPath: string }> {
     const mediaType = await detectSourceType(imagePath);
+    const out = outputPath(imagePath, ".chd", outDir);
     const args = buildArgs(mediaType, imagePath, outDir, opts);
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
     setProgressLabel("Converting…");
@@ -126,10 +154,10 @@ export default function CreateCHD() {
         ...prev,
         { stream: ok ? "success" : "error", line: `Exit code ${code}` },
       ]);
-      return ok;
+      return { ok, outputPath: out };
     } catch (e) {
       setLines((prev) => [...prev, { stream: "error", line: String(e) }]);
-      return false;
+      return { ok: false, outputPath: out };
     } finally {
       unlistenOutput();
       unlistenProgress();
@@ -192,7 +220,9 @@ export default function CreateCHD() {
               ...prev,
               { stream: "info", line: `→ [${j + 1}/${images.length}] ${basename(images[j])}` },
             ]);
-            if (!(await runOne(images[j]))) ok = false;
+            const result = await runOne(images[j]);
+            if (!result.ok) ok = false;
+            else await checkDat(result.outputPath);
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -201,7 +231,9 @@ export default function CreateCHD() {
           ok = false;
         }
       } else {
-        ok = await runOne(file.path);
+        const result = await runOne(file.path);
+        ok = result.ok;
+        if (ok) await checkDat(result.outputPath);
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -293,7 +325,7 @@ export default function CreateCHD() {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Sector Size (bytes, HD/Raw only)</label>
+            <label className="form-label">Sector/Unit Size (bytes, HD/Raw only)</label>
             <input
               className="form-input"
               type="number"
@@ -303,6 +335,18 @@ export default function CreateCHD() {
               onChange={(e) => setOpt("sectorsize", e.currentTarget.value)}
               disabled={running}
             />
+          </div>
+
+          <div className="form-group form-group-check">
+            <label className="form-check">
+              <input
+                type="checkbox"
+                checked={opts.force === "1"}
+                onChange={(e) => setOpt("force", e.currentTarget.checked ? "1" : "")}
+                disabled={running}
+              />
+              Overwrite existing files
+            </label>
           </div>
         </div>
       </div>

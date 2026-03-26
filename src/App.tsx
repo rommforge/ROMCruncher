@@ -7,9 +7,11 @@ import ConvertCHD from "./pages/ConvertCHD";
 import InfoPage from "./pages/InfoPage";
 import VerifyPage from "./pages/VerifyPage";
 import Settings from "./pages/Settings";
+import AuditPage from "./pages/AuditPage";
+import { DatProvider } from "./context/DatContext";
 import "./App.css";
 
-export type Page = "create" | "extract" | "convert" | "info" | "verify" | "settings";
+export type Page = "create" | "extract" | "convert" | "info" | "verify" | "audit" | "settings";
 
 function App() {
   const [page, setPage] = useState<Page>("create");
@@ -26,14 +28,17 @@ function App() {
 
   return (
     <div className="app">
-      <Layout currentPage={page} onNavigate={setPage}>
-        <div style={{ display: page === "create"   ? "contents" : "none" }}><CreateCHD /></div>
-        <div style={{ display: page === "extract"  ? "contents" : "none" }}><ExtractCHD /></div>
-        <div style={{ display: page === "convert"  ? "contents" : "none" }}><ConvertCHD /></div>
-        <div style={{ display: page === "info"     ? "contents" : "none" }}><InfoPage /></div>
-        <div style={{ display: page === "verify"   ? "contents" : "none" }}><VerifyPage /></div>
-        <div style={{ display: page === "settings" ? "contents" : "none" }}><Settings /></div>
-      </Layout>
+      <DatProvider>
+        <Layout currentPage={page} onNavigate={setPage}>
+          <div style={{ display: page === "create"   ? "contents" : "none" }}><CreateCHD /></div>
+          <div style={{ display: page === "extract"  ? "contents" : "none" }}><ExtractCHD /></div>
+          <div style={{ display: page === "convert"  ? "contents" : "none" }}><ConvertCHD /></div>
+          <div style={{ display: page === "info"     ? "contents" : "none" }}><InfoPage /></div>
+          <div style={{ display: page === "verify"   ? "contents" : "none" }}><VerifyPage /></div>
+          <div style={{ display: page === "audit"    ? "contents" : "none" }}><AuditPage /></div>
+          <div style={{ display: page === "settings" ? "contents" : "none" }}><Settings /></div>
+        </Layout>
+      </DatProvider>
     </div>
   );
 }

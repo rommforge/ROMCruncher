@@ -459,13 +459,161 @@ fn get_app_dirs() -> Result<AppDirs, String> {
     })
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DatRom {
+    pub name: String,
+    pub sha1: Option<String>,
+    pub crc: Option<String>,
+    pub is_disk: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DatGame {
+    pub name: String,
+    pub description: String,
+    pub roms: Vec<DatRom>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ParsedDat {
+    pub header_name: String,
+    pub header_version: String,
+    pub games: Vec<DatGame>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FileHashes {
+    pub sha1: String,
+    pub crc32: String,
+}
+
+/// Ensure the dat folder exists and return all .dat/.xml files inside it.
+#[tauri::command]
+fn scan_dat_folder() -> Result<Vec<String>, String> {
+    let dir = exe_dir()?.join("dat");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut files: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_file() { return None; }
+            let ext = p.extension()?.to_string_lossy().to_lowercase();
+            if ext == "dat" || ext == "xml" {
+                Some(p.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Parse a No-Intro / Redump / TOSEC DAT file (XML format).
+#[tauri::command]
+fn parse_dat(path: String) -> Result<ParsedDat, String> {
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let doc = roxmltree::Document::parse(&content).map_err(|e| e.to_string())?;
+
+    let root = doc.root_element();
+
+    // Read header fields
+    let header = root.children().find(|n| n.tag_name().name() == "header");
+    let header_name = header
+        .and_then(|h| h.children().find(|n| n.tag_name().name() == "name"))
+        .and_then(|n| n.text())
+        .unwrap_or("")
+        .to_string();
+    let header_version = header
+        .and_then(|h| h.children().find(|n| n.tag_name().name() == "version"))
+        .and_then(|n| n.text())
+        .unwrap_or("")
+        .to_string();
+
+    let mut games: Vec<DatGame> = Vec::new();
+
+    for node in root.children() {
+        let tag = node.tag_name().name();
+        if tag != "game" && tag != "machine" { continue; }
+
+        let name = node.attribute("name").unwrap_or("").to_string();
+        let description = node
+            .children()
+            .find(|n| n.tag_name().name() == "description")
+            .and_then(|n| n.text())
+            .unwrap_or(&name)
+            .to_string();
+
+        let mut roms: Vec<DatRom> = Vec::new();
+        for child in node.children() {
+            let ct = child.tag_name().name();
+            if ct != "rom" && ct != "disk" { continue; }
+            roms.push(DatRom {
+                name: child.attribute("name").unwrap_or("").to_string(),
+                sha1: child.attribute("sha1").map(|s| s.to_lowercase()),
+                crc:  child.attribute("crc").map(|s| s.to_lowercase()),
+                is_disk: ct == "disk",
+            });
+        }
+
+        if !roms.is_empty() {
+            games.push(DatGame { name, description, roms });
+        }
+    }
+
+    Ok(ParsedDat { header_name, header_version, games })
+}
+
+/// Hash a file and return its SHA1 and CRC32 (lowercase hex).
+/// Emits `hash-progress` (0–100) events during processing.
+#[tauri::command]
+async fn hash_file(app: AppHandle, path: String) -> Result<FileHashes, String> {
+    use sha1::{Sha1, Digest};
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<FileHashes, String> {
+        let total = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+
+        let mut sha1_h = Sha1::new();
+        let mut crc32_h = crc32fast::Hasher::new();
+
+        let mut processed: u64 = 0;
+        let mut last_pct: u32 = 0;
+        let mut buf = [0u8; 65536];
+
+        loop {
+            let n = std::io::Read::read(&mut file, &mut buf).map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            sha1_h.update(&buf[..n]);
+            crc32_h.update(&buf[..n]);
+            processed += n as u64;
+            if total > 0 {
+                let pct = ((processed * 100) / total).min(100) as u32;
+                if pct != last_pct {
+                    last_pct = pct;
+                    app.emit("hash-progress", pct).ok();
+                }
+            }
+        }
+
+        Ok(FileHashes {
+            sha1:  hex::encode(sha1_h.finalize()),
+            crc32: format!("{:08x}", crc32_h.finalize()),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Ensure input / output / temp folders exist next to the executable.
+    // Ensure input / output / temp / dat folders exist next to the executable.
     if let Ok(base) = exe_dir() {
         let _ = std::fs::create_dir_all(base.join("input"));
         let _ = std::fs::create_dir_all(base.join("output"));
         let _ = std::fs::create_dir_all(base.join("temp"));
+        let _ = std::fs::create_dir_all(base.join("dat"));
     }
 
     tauri::Builder::default()
@@ -489,6 +637,9 @@ pub fn run() {
             cleanup_dir,
             get_file_size,
             detect_chd_type,
+            scan_dat_folder,
+            parse_dat,
+            hash_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

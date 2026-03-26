@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
+import { useDat } from "../context/DatContext";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
 
@@ -59,7 +60,33 @@ export default function ExtractCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
+  const { datIndex } = useDat();
   const cancelledRef = useRef(false);
+  const [force, setForce]       = useState(false);
+  const [splitBin, setSplitBin] = useState(false);
+
+  async function checkDat(filePath: string) {
+    if (datIndex.size === 0) return;
+    try {
+      setProgressLabel("Verifying…");
+      const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
+      setJobProgress(0);
+      try {
+        const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
+        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+        if (match) {
+          setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
+        } else {
+          setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        }
+      } finally {
+        unlistenHash();
+        setJobProgress(null);
+      }
+    } catch {
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not hash file" }]);
+    }
+  }
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
@@ -70,7 +97,7 @@ export default function ExtractCHD() {
     if (result && !Array.isArray(result)) setOutDir(result);
   }
 
-  async function runOne(imagePath: string): Promise<boolean> {
+  async function runOne(imagePath: string): Promise<{ ok: boolean; outputPath: string }> {
     let mediaType = "cd";
     try {
       mediaType = await invoke<string>("detect_chd_type", { path: imagePath });
@@ -80,7 +107,10 @@ export default function ExtractCHD() {
 
     const cmd = EXTRACT_CMD[mediaType] ?? "extractcd";
     const ext = OUTPUT_EXT[mediaType] ?? ".cue";
-    const args = [cmd, "-i", imagePath, "-o", outputPath(imagePath, ext, outDir)];
+    const out = outputPath(imagePath, ext, outDir);
+    const args = [cmd, "-i", imagePath, "-o", out];
+    if (force) args.push("-f");
+    if (mediaType === "cd" && splitBin) args.push("-sb");
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
     setProgressLabel("Extracting CHD…");
     setJobProgress(0);
@@ -103,10 +133,10 @@ export default function ExtractCHD() {
         ...prev,
         { stream: ok ? "success" : "error", line: `Exit code ${code}` },
       ]);
-      return ok;
+      return { ok, outputPath: out };
     } catch (e) {
       setLines((prev) => [...prev, { stream: "error", line: String(e) }]);
-      return false;
+      return { ok: false, outputPath: out };
     } finally {
       unlistenOutput();
       unlistenProgress();
@@ -169,7 +199,9 @@ export default function ExtractCHD() {
               ...prev,
               { stream: "info", line: `→ [${j + 1}/${chds.length}] ${basename(chds[j])}` },
             ]);
-            if (!(await runOne(chds[j]))) ok = false;
+            const result = await runOne(chds[j]);
+            if (!result.ok) ok = false;
+            else await checkDat(result.outputPath);
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -178,7 +210,9 @@ export default function ExtractCHD() {
           ok = false;
         }
       } else {
-        ok = await runOne(file.path);
+        const result = await runOne(file.path);
+        ok = result.ok;
+        if (ok) await checkDat(result.outputPath);
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -224,6 +258,32 @@ export default function ExtractCHD() {
             <button type="button" className="btn btn-ghost btn-sm" onClick={handleBrowseOutDir} disabled={running}>
               Browse…
             </button>
+          </div>
+        </div>
+
+        <div className="options-grid">
+          <div className="form-group form-group-check">
+            <label className="form-check">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.currentTarget.checked)}
+                disabled={running}
+              />
+              Overwrite existing files
+            </label>
+          </div>
+
+          <div className="form-group form-group-check">
+            <label className="form-check">
+              <input
+                type="checkbox"
+                checked={splitBin}
+                onChange={(e) => setSplitBin(e.currentTarget.checked)}
+                disabled={running}
+              />
+              Split .bin per track (CD-ROM only)
+            </label>
           </div>
         </div>
       </div>
