@@ -1,4 +1,4 @@
-# rommCHD
+# RomMForge
 
 A GUI frontend for [chdman](https://docs.mamedev.org/tools/chdman.html), the CHD file utility from MAME. Built with Tauri v2, React 19, and TypeScript.
 
