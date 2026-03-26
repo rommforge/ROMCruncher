@@ -660,6 +660,83 @@ html, body, #root {
 .theme-btn:hover:not(.active) { background: var(--bg-tertiary); color: var(--text-primary); }
 .theme-btn.active { background: var(--accent-dim); color: var(--accent); }
 
+/* ── Job Report ─────────────────────── */
+.job-report {
+  margin-top: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.job-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-report-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.job-report-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.report-sep { color: var(--text-muted); }
+
+.report-count          { color: var(--text-secondary); }
+.report-count.ok       { color: var(--success); }
+.report-count.fail     { color: var(--error); }
+.report-count.match    { color: var(--success); }
+.report-count.no-match { color: var(--text-secondary); }
+
+.job-report-table { max-height: 280px; overflow-y: auto; }
+
+.job-report-thead {
+  display: flex;
+  gap: 12px;
+  padding: 5px 14px;
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+}
+
+.job-report-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.job-report-row:last-child { border-bottom: none; }
+
+.jrc-status { flex-shrink: 0; width: 14px; text-align: center; }
+.jrc-name   { flex: 0 0 220px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Cascadia Code', 'Fira Code', monospace; color: var(--text-primary); }
+.jrc-dat    { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.report-ok        { color: var(--success); }
+.report-fail      { color: var(--error); }
+.report-dat-match { color: var(--success); }
+.report-dat-file  { color: var(--text-muted); font-size: 11px; }
+.report-dat-none  { color: var(--text-secondary); }
+.report-dat-err   { color: var(--warning); }
+.report-dat-skip  { color: var(--text-muted); }
+
 /* ── DAT Audit page ─────────────────── */
 .audit-dats-panel {
   background: var(--bg-secondary);

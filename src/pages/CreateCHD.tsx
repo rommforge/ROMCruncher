@@ -6,6 +6,7 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
+import JobReport, { type ReportEntry } from "../components/JobReport";
 
 const ALL_FILTERS = [{ name: "Disc/Disk Images", extensions: ["cue", "gdi", "iso", "raw", "img", "bin", "avi"] }];
 const ALL_FOLDER_EXTS = ["cue", "gdi", "iso", "raw", "img", "bin", "avi"];
@@ -94,27 +95,29 @@ export default function CreateCHD() {
 
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
+  const [report, setReport] = useState<ReportEntry[]>([]);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
   }
 
-  async function checkDat(filePath: string) {
-    if (datIndex.size === 0) return;
+  async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
+    if (datIndex.size === 0) return { datStatus: "skipped" };
     try {
       setProgressLabel("Verifying…");
       setJobProgress(null);
-      // CHD output files must be verified via chdman's Data SHA1, not a raw file hash.
       const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
       const match = datIndex.get(sha1);
       if (match) {
         setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
-      } else {
-        setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };
       }
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+      return { datStatus: "no-match" };
     } catch {
       setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not verify" }]);
+      return { datStatus: "error" };
     }
   }
 
@@ -172,6 +175,7 @@ export default function CreateCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
+    setReport([]);
     setProgress({ done: 0, total: files.length });
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
@@ -216,8 +220,9 @@ export default function CreateCHD() {
               { stream: "info", line: `→ [${j + 1}/${images.length}] ${basename(images[j])}` },
             ]);
             const result = await runOne(images[j]);
+            const dat = result.ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
             if (!result.ok) ok = false;
-            else await checkDat(result.outputPath);
+            setReport((prev) => [...prev, { name: basename(images[j]), ok: result.ok, ...dat }]);
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -228,7 +233,8 @@ export default function CreateCHD() {
       } else {
         const result = await runOne(file.path);
         ok = result.ok;
-        if (ok) await checkDat(result.outputPath);
+        const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
+        setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -365,6 +371,7 @@ export default function CreateCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
+      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }

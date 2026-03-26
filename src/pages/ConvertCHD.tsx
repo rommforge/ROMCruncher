@@ -6,6 +6,7 @@ import BatchFileList, { type FileEntry } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
+import JobReport, { type ReportEntry } from "../components/JobReport";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
 
@@ -24,6 +25,10 @@ function dirOf(path: string): string {
 function basenameNoExt(path: string): string {
   const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
   return name.replace(/\.[^.]+$/, "");
+}
+
+function basename(path: string): string {
+  return path.replace(/\\/g, "/").split("/").pop() ?? path;
 }
 
 function outputChdPath(inputPath: string, outDir: string): string {
@@ -57,10 +62,11 @@ export default function ConvertCHD() {
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
   const [force, setForce] = useState(false);
+  const [report, setReport] = useState<ReportEntry[]>([]);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
-  async function checkDat(filePath: string) {
-    if (datIndex.size === 0) return;
+  async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
+    if (datIndex.size === 0) return { datStatus: "skipped" };
     try {
       setProgressLabel("Verifying…");
       setJobProgress(null);
@@ -68,11 +74,13 @@ export default function ConvertCHD() {
       const match = datIndex.get(sha1);
       if (match) {
         setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
-      } else {
-        setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };
       }
+      setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+      return { datStatus: "no-match" };
     } catch {
       setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not verify" }]);
+      return { datStatus: "error" };
     }
   }
 
@@ -163,6 +171,7 @@ export default function ConvertCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
+    setReport([]);
     setProgress({ done: 0, total: files.length });
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
@@ -179,7 +188,8 @@ export default function ConvertCHD() {
 
       const result = await convertOne(file.path);
       const ok = result.ok;
-      if (ok) await checkDat(result.outputPath);
+      const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
+      setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
       updateFileStatus(file.id, ok ? "success" : "error");
       if (!ok) allOk = false;
       setProgress({ done: i + 1, total: files.length });
@@ -301,6 +311,7 @@ export default function ConvertCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
+      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
+import JobReport, { type ReportEntry } from "../components/JobReport";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
 
@@ -64,9 +65,10 @@ export default function ExtractCHD() {
   const cancelledRef = useRef(false);
   const [force, setForce]       = useState(false);
   const [splitBin, setSplitBin] = useState(false);
+  const [report, setReport]     = useState<ReportEntry[]>([]);
 
-  async function checkDat(filePath: string) {
-    if (datIndex.size === 0) return;
+  async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
+    if (datIndex.size === 0) return { datStatus: "skipped" };
     try {
       setProgressLabel("Verifying…");
       const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
@@ -76,15 +78,17 @@ export default function ExtractCHD() {
         const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
         if (match) {
           setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
-        } else {
-          setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+          return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };
         }
+        setLines((prev) => [...prev, { stream: "info", line: "→ DAT: No match found" }]);
+        return { datStatus: "no-match" };
       } finally {
         unlistenHash();
         setJobProgress(null);
       }
     } catch {
       setLines((prev) => [...prev, { stream: "info", line: "→ DAT: Could not hash file" }]);
+      return { datStatus: "error" };
     }
   }
 
@@ -156,6 +160,7 @@ export default function ExtractCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
+    setReport([]);
     setProgress({ done: 0, total: files.length });
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
@@ -200,8 +205,9 @@ export default function ExtractCHD() {
               { stream: "info", line: `→ [${j + 1}/${chds.length}] ${basename(chds[j])}` },
             ]);
             const result = await runOne(chds[j]);
+            const dat = result.ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
             if (!result.ok) ok = false;
-            else await checkDat(result.outputPath);
+            setReport((prev) => [...prev, { name: basename(chds[j]), ok: result.ok, ...dat }]);
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -212,7 +218,8 @@ export default function ExtractCHD() {
       } else {
         const result = await runOne(file.path);
         ok = result.ok;
-        if (ok) await checkDat(result.outputPath);
+        const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
+        setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -307,6 +314,7 @@ export default function ExtractCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
+      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }
