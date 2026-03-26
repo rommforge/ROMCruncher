@@ -196,11 +196,6 @@ export default function ExtractCHD() {
 
   const handleCancel = () => invoke("cancel_chdman").catch(() => {});
 
-  const outLabel =
-    tab === "cd"  ? "Output folder (.cue + .bin per file)" :
-    tab === "dvd" ? "Output folder (.iso per file)" :
-    "Output folder (.raw per file)";
-
   return (
     <div className="page-wrapper">
       <div className="page-header">

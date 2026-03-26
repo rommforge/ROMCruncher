@@ -31,11 +31,6 @@ function basename(path: string): string {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
 }
 
-function dirname(path: string): string {
-  const normalized = path.replace(/\\/g, "/");
-  const idx = normalized.lastIndexOf("/");
-  return idx >= 0 ? path.substring(0, idx) : "";
-}
 
 function mergeFiles(existing: FileEntry[], newPaths: string[]): FileEntry[] {
   const seen = new Set(existing.map((f) => f.path));
