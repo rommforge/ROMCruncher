@@ -2,13 +2,18 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import BatchFileList, { type FileEntry } from "../components/BatchFileList";
+import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
-import JobReport, { type ReportEntry } from "../components/JobReport";
+import { buildReportLines, type ReportEntry } from "../components/JobReport";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
+
+interface ArchiveContents { temp_dir: string; files: string[] }
+function isArchive(path: string) {
+  return ARCHIVE_EXTS.includes(path.split(".").pop()?.toLowerCase() ?? "");
+}
 
 const EXTRACT_CMD: Record<string, string> = { cd: "extractcd", dvd: "extractdvd", hd: "extracthd", raw: "extractraw", ld: "extractld" };
 const CREATE_CMD:  Record<string, string> = { cd: "createcd",  dvd: "createdvd",  hd: "createhd",  raw: "createraw",  ld: "createld"  };
@@ -61,9 +66,9 @@ export default function ConvertCHD() {
 
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
+  const [mediaTypeOverride, setMediaTypeOverride] = useState("auto");
   const [force, setForce] = useState(false);
   const [deleteOnVerify, setDeleteOnVerify] = useState(false);
-  const [report, setReport] = useState<ReportEntry[]>([]);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
   async function runVerify(outputPath: string): Promise<boolean> {
@@ -146,18 +151,23 @@ export default function ConvertCHD() {
   }
 
   async function convertOne(inputPath: string): Promise<{ ok: boolean; outputPath: string }> {
-    let mediaType = "cd";
-    try {
-      mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
-    } catch {
-      setLines((prev) => [...prev, { stream: "info", line: "→ Could not detect type, defaulting to CD-ROM" }]);
+    const out = outputChdPath(inputPath, outDir);
+    let mediaType: string;
+    if (mediaTypeOverride !== "auto") {
+      mediaType = mediaTypeOverride;
+    } else {
+      try {
+        mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
+      } catch (e) {
+        setLines((prev) => [...prev, { stream: "error", line: `→ ${String(e)}` }]);
+        return { ok: false, outputPath: out };
+      }
     }
 
     const intExt = INTERMEDIATE_EXT[mediaType] ?? ".cue";
     const tempDir = await invoke<string>("create_temp_dir");
     const s = sep(inputPath);
     const intermediatePath = `${tempDir}${s}${basenameNoExt(inputPath)}${intExt}`;
-    const out = outputChdPath(inputPath, outDir);
 
     try {
       setLines((prev) => [...prev, { stream: "info", line: `→ Step 1/2: Extracting to ${intExt}…` }]);
@@ -191,8 +201,8 @@ export default function ConvertCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
-    setReport([]);
     setProgress({ done: 0, total: files.length });
+    const reportEntries: ReportEntry[] = [];
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
     let allOk = true;
@@ -206,25 +216,68 @@ export default function ConvertCHD() {
         { stream: "info", line: `\n[${i + 1}/${files.length}] ${file.path}` },
       ]);
 
-      const result = await convertOne(file.path);
-      const ok = result.ok;
-      const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
-      setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
+      let ok = true;
 
-      if (ok && deleteOnVerify) {
-        if (datIndex.size > 0 && dat.datStatus !== "match") {
-          setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: no DAT match found" }]);
-        } else {
-          const verified = await runVerify(result.outputPath);
-          if (verified) {
-            try {
-              await invoke("delete_file", { path: file.path });
-              setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
-            } catch (e) {
-              setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
-            }
+      if (isArchive(file.path)) {
+        setLines((prev) => [...prev, { stream: "info", line: "→ Extracting archive…" }]);
+        try {
+          setProgressLabel("Extracting…");
+          setJobProgress(0);
+          const unlistenExtract = await listen<number | null>("extract-progress", (e) => {
+            setJobProgress(e.payload ?? null);
+          });
+          let extractResult: ArchiveContents;
+          try {
+            extractResult = await invoke<ArchiveContents>("extract_archive", { archivePath: file.path });
+          } finally {
+            unlistenExtract();
+            setJobProgress(null);
+          }
+          const { temp_dir, files: allExtracted } = extractResult;
+          const images = allExtracted.filter((f) => f.toLowerCase().endsWith(".chd"));
+
+          if (images.length === 0) {
+            setLines((prev) => [...prev, { stream: "error", line: "No CHD files found in archive. Convert CHD only accepts archives containing .chd files." }]);
+            ok = false;
+          }
+
+          for (let j = 0; j < images.length; j++) {
+            setLines((prev) => [
+              ...prev,
+              { stream: "info", line: `→ [${j + 1}/${images.length}] ${basename(images[j])}` },
+            ]);
+            const result = await convertOne(images[j]);
+            const dat = result.ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
+            if (!result.ok) ok = false;
+            reportEntries.push({ name: basename(images[j]), ok: result.ok, ...dat });
+          }
+
+          await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
+        } catch (e) {
+          setLines((prev) => [...prev, { stream: "error", line: `Extraction failed: ${String(e)}` }]);
+          ok = false;
+        }
+      } else {
+        const result = await convertOne(file.path);
+        ok = result.ok;
+        const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
+        reportEntries.push({ name: basename(file.path), ok, ...dat });
+
+        if (ok && deleteOnVerify) {
+          if (datIndex.size > 0 && dat.datStatus !== "match") {
+            setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: no DAT match found" }]);
           } else {
-            setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
+            const verified = await runVerify(result.outputPath);
+            if (verified) {
+              try {
+                await invoke("delete_file", { path: file.path });
+                setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
+              } catch (e) {
+                setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
+              }
+            } else {
+              setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
+            }
           }
         }
       }
@@ -234,6 +287,9 @@ export default function ConvertCHD() {
       setProgress({ done: i + 1, total: files.length });
     }
 
+    if (reportEntries.length > 1) {
+      setLines((prev) => [...prev, ...buildReportLines(reportEntries, datIndex.size > 0)]);
+    }
     setRunning(false);
     setExitStatus(allOk ? "success" : "error");
   }
@@ -278,6 +334,23 @@ export default function ConvertCHD() {
         <div className="form-section-title">Re-encode Options</div>
 
         <div className="options-grid">
+          <div className="form-group">
+            <label className="form-label">Media Type Override</label>
+            <select
+              className="form-input"
+              value={mediaTypeOverride}
+              onChange={(e) => setMediaTypeOverride(e.currentTarget.value)}
+              disabled={running}
+            >
+              <option value="auto">Auto-Detect</option>
+              <option value="cd">CD-ROM</option>
+              <option value="dvd">DVD-ROM</option>
+              <option value="hd">Hard Disk</option>
+              <option value="raw">Raw</option>
+              <option value="ld">LaserDisc</option>
+            </select>
+          </div>
+
           <div className="form-group">
             <label className="form-label">Compression</label>
             <input
@@ -362,7 +435,6 @@ export default function ConvertCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
-      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }

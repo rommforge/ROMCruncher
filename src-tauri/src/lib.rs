@@ -510,18 +510,34 @@ async fn detect_chd_type(path: String) -> Result<String, String> {
             .map_err(|e| format!("Failed to run chdman: {}", e))?;
         let text = String::from_utf8_lossy(&output.stdout).to_string()
             + &String::from_utf8_lossy(&output.stderr);
-        // Match known CHD metadata tags to determine disc type.
-        if text.contains("CHCD") || text.contains("CHT2") || text.contains("GDDD") || text.contains("GDTR") {
-            Ok("cd".to_string())
-        } else if text.contains("DVDM") {
-            Ok("dvd".to_string())
-        } else if text.contains("AVAV") {
-            Ok("ld".to_string())
-        } else if text.contains("IDNT") || text.contains("PTBL") {
-            Ok("hd".to_string())
-        } else {
-            Ok("raw".to_string())
+
+        // CD-specific compression codecs are unambiguous — chdman only uses these for CD CHDs.
+        for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with("Compression:") {
+                if t.contains("cdlz") || t.contains("cdzl") || t.contains("cdfl") {
+                    return Ok("cd".to_string());
+                }
+                break;
+            }
         }
+
+        // Match metadata tags scoped to "Metadata:" lines — avoids false matches in file paths.
+        for line in text.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("Metadata:") {
+                let tag = rest.trim().split_whitespace().next().unwrap_or("");
+                match tag {
+                    "CHCD" | "CHT2" | "CHTR" | "GDDD" | "GDTR" => return Ok("cd".to_string()),
+                    "DVDM" => return Ok("dvd".to_string()),
+                    "AVAV" => return Ok("ld".to_string()),
+                    "IDNT" | "PTBL" => return Ok("hd".to_string()),
+                    _ => {}
+                }
+            }
+        }
+
+        Err("Could not determine CHD type from chdman info output. Set the Media Type Override.".to_string())
     })
     .await
     .map_err(|e| e.to_string())?

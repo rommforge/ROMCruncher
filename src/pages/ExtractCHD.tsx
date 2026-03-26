@@ -6,7 +6,7 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
-import JobReport, { type ReportEntry } from "../components/JobReport";
+import { buildReportLines, type ReportEntry } from "../components/JobReport";
 
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
 
@@ -65,7 +65,6 @@ export default function ExtractCHD() {
   const cancelledRef = useRef(false);
   const [force, setForce]       = useState(false);
   const [splitBin, setSplitBin] = useState(false);
-  const [report, setReport]     = useState<ReportEntry[]>([]);
 
   async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
     if (datIndex.size === 0) return { datStatus: "skipped" };
@@ -160,8 +159,8 @@ export default function ExtractCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
-    setReport([]);
     setProgress({ done: 0, total: files.length });
+    const reportEntries: ReportEntry[] = [];
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
     let allOk = true;
@@ -207,7 +206,7 @@ export default function ExtractCHD() {
             const result = await runOne(chds[j]);
             const dat = result.ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
             if (!result.ok) ok = false;
-            setReport((prev) => [...prev, { name: basename(chds[j]), ok: result.ok, ...dat }]);
+            reportEntries.push({ name: basename(chds[j]), ok: result.ok, ...dat });
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -219,7 +218,7 @@ export default function ExtractCHD() {
         const result = await runOne(file.path);
         ok = result.ok;
         const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
-        setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
+        reportEntries.push({ name: basename(file.path), ok, ...dat });
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -227,6 +226,9 @@ export default function ExtractCHD() {
       setProgress({ done: i + 1, total: files.length });
     }
 
+    if (reportEntries.length > 1) {
+      setLines((prev) => [...prev, ...buildReportLines(reportEntries, datIndex.size > 0)]);
+    }
     setRunning(false);
     setExitStatus(allOk ? "success" : "error");
   }
@@ -314,7 +316,6 @@ export default function ExtractCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
-      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }

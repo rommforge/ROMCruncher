@@ -6,7 +6,7 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 import { useDat } from "../context/DatContext";
-import JobReport, { type ReportEntry } from "../components/JobReport";
+import { buildReportLines, type ReportEntry } from "../components/JobReport";
 
 const ALL_FILTERS = [{ name: "Disc/Disk Images", extensions: ["cue", "gdi", "iso", "raw", "img", "bin", "avi"] }];
 const ALL_FOLDER_EXTS = ["cue", "gdi", "iso", "raw", "img", "bin", "avi"];
@@ -40,21 +40,12 @@ function outputPath(inputPath: string, ext: string, outDir: string): string {
   return `${dir}${dir.endsWith(s) ? "" : s}${basenameNoExt(inputPath)}${ext}`;
 }
 
-async function detectSourceType(path: string): Promise<string> {
+function detectSourceType(path: string): string | null {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   if (ext === "cue" || ext === "gdi") return "cd";
   if (ext === "avi") return "ld";
-  if (ext === "img" || ext === "bin") return "hd";
-  if (ext === "raw") return "raw";
-  if (ext === "iso") {
-    try {
-      const size = await invoke<number>("get_file_size", { path });
-      return size > 1_000_000_000 ? "dvd" : "cd";
-    } catch {
-      return "cd";
-    }
-  }
-  return "cd";
+  if (ext === "iso") return "dvd";
+  return null;
 }
 
 function buildArgs(mediaType: string, inputPath: string, outDir: string, opts: Record<string, string>): string[] {
@@ -98,7 +89,6 @@ export default function CreateCHD() {
 
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
-  const [report, setReport] = useState<ReportEntry[]>([]);
   const [deleteOnVerify, setDeleteOnVerify] = useState(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
@@ -150,8 +140,12 @@ export default function CreateCHD() {
   }
 
   async function runOne(imagePath: string): Promise<{ ok: boolean; outputPath: string }> {
-    const mediaType = mediaTypeOverride !== "auto" ? mediaTypeOverride : await detectSourceType(imagePath);
     const out = outputPath(imagePath, ".chd", outDir);
+    const mediaType = mediaTypeOverride !== "auto" ? mediaTypeOverride : detectSourceType(imagePath);
+    if (!mediaType) {
+      setLines((prev) => [...prev, { stream: "error", line: `→ Cannot auto-detect media type for this file type. Set the Media Type Override before running.` }]);
+      return { ok: false, outputPath: out };
+    }
     const args = buildArgs(mediaType, imagePath, outDir, opts);
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
     setProgressLabel("Converting…");
@@ -198,8 +192,8 @@ export default function CreateCHD() {
     setRunning(true);
     setExitStatus(null);
     setLines([]);
-    setReport([]);
     setProgress({ done: 0, total: files.length });
+    const reportEntries: ReportEntry[] = [];
     setFiles((prev) => prev.map((f) => ({ ...f, status: "pending" })));
 
     let allOk = true;
@@ -245,7 +239,7 @@ export default function CreateCHD() {
             const result = await runOne(images[j]);
             const dat = result.ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
             if (!result.ok) ok = false;
-            setReport((prev) => [...prev, { name: basename(images[j]), ok: result.ok, ...dat }]);
+            reportEntries.push({ name: basename(images[j]), ok: result.ok, ...dat });
           }
 
           await invoke("cleanup_dir", { dir: temp_dir }).catch(() => {});
@@ -257,7 +251,7 @@ export default function CreateCHD() {
         const result = await runOne(file.path);
         ok = result.ok;
         const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
-        setReport((prev) => [...prev, { name: basename(file.path), ok, ...dat }]);
+        reportEntries.push({ name: basename(file.path), ok, ...dat });
 
         if (ok && deleteOnVerify) {
           const ext = file.path.split(".").pop()?.toLowerCase() ?? "";
@@ -286,6 +280,9 @@ export default function CreateCHD() {
       setProgress({ done: i + 1, total: files.length });
     }
 
+    if (reportEntries.length > 1) {
+      setLines((prev) => [...prev, ...buildReportLines(reportEntries, datIndex.size > 0)]);
+    }
     setRunning(false);
     setExitStatus(allOk ? "success" : "error");
   }
@@ -338,7 +335,7 @@ export default function CreateCHD() {
               onChange={(e) => setMediaTypeOverride(e.currentTarget.value)}
               disabled={running}
             >
-              <option value="auto">Auto-detect</option>
+              <option value="auto">Auto-Detect</option>
               <option value="cd">CD-ROM</option>
               <option value="dvd">DVD-ROM</option>
               <option value="hd">Hard Disk</option>
@@ -444,7 +441,6 @@ export default function CreateCHD() {
       </div>
 
       <OutputLog lines={lines} onClear={() => setLines([])} />
-      {!running && <JobReport entries={report} hasDats={datIndex.size > 0} />}
     </div>
   );
 }
