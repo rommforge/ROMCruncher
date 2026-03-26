@@ -32,7 +32,7 @@ pub struct AppState {
     pub cancel_flag: Arc<AtomicBool>,
 }
 
-/// Returns the directory containing the rommCHD executable.
+/// Returns the directory containing the RomMForge executable.
 /// All persistent data (settings, temp files) lives here so the app is portable.
 fn exe_dir() -> Result<std::path::PathBuf, String> {
     std::env::current_exe()

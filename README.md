@@ -40,7 +40,7 @@ After every batch Create/Extract/Convert run, a summary table shows each file's 
 
 ## Setup
 
-1. Download or build `rommchd.exe`
+1. Download or build `rommforge.exe`
 2. Place it in a folder — the app creates `input/`, `output/`, `temp/`, and `dat/` subfolders automatically
 3. Open **Settings** and set the path to `chdman.exe` (available as part of a MAME installation)
 4. Optionally drop DAT files into the `dat/` subfolder
@@ -57,7 +57,7 @@ npm install
 npm run tauri build
 ```
 
-The compiled executable will be at `src-tauri/target/release/rommchd.exe`.
+The compiled executable will be at `src-tauri/target/release/rommforge.exe`.
 
 ## Tech Stack
 
