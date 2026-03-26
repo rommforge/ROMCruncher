@@ -34,6 +34,16 @@ export default function AuditPage() {
     setFilePaths((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
   }
 
+  async function handleAddFolder() {
+    const result = await open({ directory: true, multiple: false });
+    if (!result || Array.isArray(result)) return;
+    const found = await invoke<string[]>("scan_folder", {
+      dir: result,
+      extensions: ["chd", "cue", "gdi", "iso", "bin", "img", "raw", "avi"],
+    }).catch(() => [] as string[]);
+    setFilePaths((prev) => [...prev, ...found.filter((p) => !prev.includes(p))]);
+  }
+
   function removeFile(path: string) {
     setFilePaths((prev) => prev.filter((p) => p !== path));
   }
@@ -137,6 +147,7 @@ export default function AuditPage() {
       <div className="form-group">
         <div className="file-list-actions">
           <button className="btn btn-ghost btn-sm" onClick={handleAddFiles} disabled={running}>+ Add Files…</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleAddFolder} disabled={running}>+ Add Folder…</button>
           {filePaths.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={() => setFilePaths([])} disabled={running}>Clear All</button>
           )}
