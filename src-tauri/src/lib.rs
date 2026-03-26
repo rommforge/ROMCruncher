@@ -414,6 +414,39 @@ pub struct AppDirs {
 }
 
 #[tauri::command]
+fn get_file_size(path: String) -> Result<u64, String> {
+    std::fs::metadata(&path).map(|m| m.len()).map_err(|e| e.to_string())
+}
+
+/// Detect the media type of a CHD file by inspecting `chdman info` output.
+/// Returns "cd", "dvd", "hd", or "raw".
+#[tauri::command]
+fn detect_chd_type(path: String) -> Result<String, String> {
+    let settings = load_settings()?;
+    if settings.chdman_path.is_empty() {
+        return Err("chdman path is not configured".to_string());
+    }
+    let output = Command::new(&settings.chdman_path)
+        .args(["info", "-i", &path])
+        .output()
+        .map_err(|e| format!("Failed to run chdman: {}", e))?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string()
+        + &String::from_utf8_lossy(&output.stderr);
+    // Match known CHD metadata tags to determine disc type.
+    if text.contains("CHCD") || text.contains("CHT2") || text.contains("GDDD") || text.contains("GDTR") {
+        Ok("cd".to_string())
+    } else if text.contains("DVDM") {
+        Ok("dvd".to_string())
+    } else if text.contains("AVAV") {
+        Ok("ld".to_string())
+    } else if text.contains("IDNT") || text.contains("PTBL") {
+        Ok("hd".to_string())
+    } else {
+        Ok("raw".to_string())
+    }
+}
+
+#[tauri::command]
 fn get_app_dirs() -> Result<AppDirs, String> {
     let base = exe_dir()?;
     let input  = base.join("input");
@@ -454,6 +487,8 @@ pub fn run() {
             extract_archive,
             create_temp_dir,
             cleanup_dir,
+            get_file_size,
+            detect_chd_type,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -6,17 +6,10 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 
-type MediaType = "cd" | "dvd" | "hd" | "raw";
-
-const TABS: { id: MediaType; label: string }[] = [
-  { id: "cd",  label: "CD-ROM" },
-  { id: "dvd", label: "DVD-ROM" },
-  { id: "hd",  label: "Hard Disk" },
-  { id: "raw", label: "Raw" },
-];
-
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
-const OUTPUT_EXT: Record<MediaType, string> = { cd: ".cue", dvd: ".iso", hd: ".raw", raw: ".raw" };
+
+const OUTPUT_EXT: Record<string, string> = { cd: ".cue", dvd: ".iso", hd: ".raw", raw: ".raw", ld: ".avi" };
+const EXTRACT_CMD: Record<string, string> = { cd: "extractcd", dvd: "extractdvd", hd: "extracthd", raw: "extractraw", ld: "extractld" };
 
 interface ArchiveContents { temp_dir: string; files: string[] }
 
@@ -47,13 +40,7 @@ function outputPath(inputPath: string, ext: string, outDir: string): string {
   return `${dir}${dir.endsWith(s) ? "" : s}${basenameNoExt(inputPath)}${ext}`;
 }
 
-function buildArgs(tab: MediaType, inputPath: string, outDir: string): string[] {
-  const cmd = tab === "cd" ? "extractcd" : tab === "dvd" ? "extractdvd" : tab === "hd" ? "extracthd" : "extractraw";
-  return [cmd, "-i", inputPath, "-o", outputPath(inputPath, OUTPUT_EXT[tab], outDir)];
-}
-
 export default function ExtractCHD() {
-  const [tab, setTab]           = useState<MediaType>("cd");
   const [files, setFiles]       = useState<FileEntry[]>([]);
   const [inputDir, setInputDir] = useState<string | undefined>();
   const [outDir, setOutDir]     = useState("");
@@ -64,6 +51,7 @@ export default function ExtractCHD() {
       setOutDir(dirs.output_dir);
     }).catch(() => {});
   }, []);
+
   const [lines, setLines]         = useState<OutputLine[]>([]);
   const [running, setRunning]     = useState(false);
   const [progress, setProgress]   = useState({ done: 0, total: 0 });
@@ -71,22 +59,28 @@ export default function ExtractCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
-  function handleTabChange(t: MediaType) {
-    if (running) return;
-    setTab(t); setFiles([]); setLines([]); setExitStatus(null);
-  }
+  const cancelledRef = useRef(false);
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
   }
 
   async function handleBrowseOutDir() {
-    const result = await open({ directory: true, multiple: false });
+    const result = await open({ directory: true, multiple: false, defaultPath: outDir || undefined });
     if (result && !Array.isArray(result)) setOutDir(result);
   }
 
   async function runOne(imagePath: string): Promise<boolean> {
-    const args = buildArgs(tab, imagePath, outDir);
+    let mediaType = "cd";
+    try {
+      mediaType = await invoke<string>("detect_chd_type", { path: imagePath });
+    } catch {
+      setLines((prev) => [...prev, { stream: "info", line: "→ Could not detect type, defaulting to CD-ROM" }]);
+    }
+
+    const cmd = EXTRACT_CMD[mediaType] ?? "extractcd";
+    const ext = OUTPUT_EXT[mediaType] ?? ".cue";
+    const args = [cmd, "-i", imagePath, "-o", outputPath(imagePath, ext, outDir)];
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
     setProgressLabel("Extracting CHD…");
     setJobProgress(0);
@@ -128,6 +122,7 @@ export default function ExtractCHD() {
       return;
     }
 
+    cancelledRef.current = false;
     setRunning(true);
     setExitStatus(null);
     setLines([]);
@@ -137,6 +132,7 @@ export default function ExtractCHD() {
     let allOk = true;
 
     for (let i = 0; i < files.length; i++) {
+      if (cancelledRef.current) break;
       const file = files[i];
       updateFileStatus(file.id, "running");
       setLines((prev) => [
@@ -194,21 +190,13 @@ export default function ExtractCHD() {
     setExitStatus(allOk ? "success" : "error");
   }
 
-  const handleCancel = () => invoke("cancel_chdman").catch(() => {});
+  const handleCancel = () => { cancelledRef.current = true; invoke("cancel_chdman").catch(() => {}); };
 
   return (
     <div className="page-wrapper">
       <div className="page-header">
         <h1 className="page-title">Extract CHD</h1>
         <p className="page-subtitle">Extract CHD files back to their original formats.</p>
-      </div>
-
-      <div className="tabs">
-        {TABS.map((t) => (
-          <div key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => handleTabChange(t.id)}>
-            {t.label}
-          </div>
-        ))}
       </div>
 
       <div className="form-grid">
@@ -238,12 +226,6 @@ export default function ExtractCHD() {
             </button>
           </div>
         </div>
-
-        {tab === "cd" && (
-          <div className="alert alert-info">
-            ℹ .bin is created automatically alongside the .cue sheet.
-          </div>
-        )}
       </div>
 
       <div className="actions-row">

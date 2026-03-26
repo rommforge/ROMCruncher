@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -6,26 +6,11 @@ import BatchFileList, { type FileEntry } from "../components/BatchFileList";
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 
-type MediaType = "cd" | "dvd" | "hd" | "raw";
-
-const TABS: { id: MediaType; label: string }[] = [
-  { id: "cd",  label: "CD-ROM" },
-  { id: "dvd", label: "DVD-ROM" },
-  { id: "hd",  label: "Hard Disk" },
-  { id: "raw", label: "Raw" },
-];
-
-const EXTRACT_CMD: Record<MediaType, string> = {
-  cd: "extractcd", dvd: "extractdvd", hd: "extracthd", raw: "extractraw",
-};
-const CREATE_CMD: Record<MediaType, string> = {
-  cd: "createcd", dvd: "createdvd", hd: "createhd", raw: "createraw",
-};
-const INTERMEDIATE_EXT: Record<MediaType, string> = {
-  cd: ".cue", dvd: ".iso", hd: ".raw", raw: ".raw",
-};
-
 const CHD_FILTERS = [{ name: "CHD Files", extensions: ["chd"] }];
+
+const EXTRACT_CMD: Record<string, string> = { cd: "extractcd", dvd: "extractdvd", hd: "extracthd", raw: "extractraw", ld: "extractld" };
+const CREATE_CMD:  Record<string, string> = { cd: "createcd",  dvd: "createdvd",  hd: "createhd",  raw: "createraw",  ld: "createld"  };
+const INTERMEDIATE_EXT: Record<string, string> = { cd: ".cue", dvd: ".iso", hd: ".raw", raw: ".raw", ld: ".avi" };
 
 function sep(path: string) { return path.includes("\\") ? "\\" : "/"; }
 
@@ -47,7 +32,6 @@ function outputChdPath(inputPath: string, outDir: string): string {
 }
 
 export default function ConvertCHD() {
-  const [tab, setTab]           = useState<MediaType>("cd");
   const [files, setFiles]       = useState<FileEntry[]>([]);
   const [inputDir, setInputDir] = useState<string | undefined>();
   const [outDir, setOutDir]     = useState("");
@@ -69,12 +53,8 @@ export default function ConvertCHD() {
     invoke<number>("get_cpu_threads").then(setMaxThreads).catch(() => {});
   }, []);
 
+  const cancelledRef = useRef(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
-
-  function handleTabChange(t: MediaType) {
-    if (running) return;
-    setTab(t); setFiles([]); setLines([]); setExitStatus(null);
-  }
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
@@ -118,22 +98,27 @@ export default function ConvertCHD() {
   }
 
   async function convertOne(inputPath: string): Promise<boolean> {
+    let mediaType = "cd";
+    try {
+      mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
+    } catch {
+      setLines((prev) => [...prev, { stream: "info", line: "→ Could not detect type, defaulting to CD-ROM" }]);
+    }
+
+    const intExt = INTERMEDIATE_EXT[mediaType] ?? ".cue";
     const tempDir = await invoke<string>("create_temp_dir");
     const s = sep(inputPath);
-    const name = basenameNoExt(inputPath);
-    const intermediatePath = `${tempDir}${s}${name}${INTERMEDIATE_EXT[tab]}`;
+    const intermediatePath = `${tempDir}${s}${basenameNoExt(inputPath)}${intExt}`;
     const outputPath = outputChdPath(inputPath, outDir);
 
     try {
-      // Step 1: extract CHD to intermediate format
-      setLines((prev) => [...prev, { stream: "info", line: `→ Step 1/2: Extracting to ${INTERMEDIATE_EXT[tab]}…` }]);
-      const extractArgs = [EXTRACT_CMD[tab], "-i", inputPath, "-o", intermediatePath];
+      setLines((prev) => [...prev, { stream: "info", line: `→ Step 1/2: Extracting to ${intExt}…` }]);
+      const extractArgs = [EXTRACT_CMD[mediaType] ?? "extractcd", "-i", inputPath, "-o", intermediatePath];
       setLines((prev) => [...prev, { stream: "info", line: `> chdman ${extractArgs.join(" ")}` }]);
       if (!(await runChdman(extractArgs, "Extracting… (1/2)"))) return false;
 
-      // Step 2: re-create CHD from intermediate format
       setLines((prev) => [...prev, { stream: "info", line: `→ Step 2/2: Re-encoding to CHD…` }]);
-      const createArgs = [CREATE_CMD[tab], "-i", intermediatePath, "-o", outputPath];
+      const createArgs = [CREATE_CMD[mediaType] ?? "createcd", "-i", intermediatePath, "-o", outputPath];
       if (opts.compression) createArgs.push("-c", opts.compression);
       if (opts.hunksize)    createArgs.push("-hs", opts.hunksize);
       if (opts.processors)  createArgs.push("-np", opts.processors);
@@ -152,6 +137,7 @@ export default function ConvertCHD() {
       return;
     }
 
+    cancelledRef.current = false;
     setRunning(true);
     setExitStatus(null);
     setLines([]);
@@ -161,6 +147,7 @@ export default function ConvertCHD() {
     let allOk = true;
 
     for (let i = 0; i < files.length; i++) {
+      if (cancelledRef.current) break;
       const file = files[i];
       updateFileStatus(file.id, "running");
       setLines((prev) => [
@@ -178,21 +165,13 @@ export default function ConvertCHD() {
     setExitStatus(allOk ? "success" : "error");
   }
 
-  const handleCancel = () => invoke("cancel_chdman").catch(() => {});
+  const handleCancel = () => { cancelledRef.current = true; invoke("cancel_chdman").catch(() => {}); };
 
   return (
     <div className="page-wrapper">
       <div className="page-header">
         <h1 className="page-title">Convert CHD</h1>
         <p className="page-subtitle">Re-encode CHDs using the current chdman version to ensure hash compatibility.</p>
-      </div>
-
-      <div className="tabs">
-        {TABS.map((t) => (
-          <div key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => handleTabChange(t.id)}>
-            {t.label}
-          </div>
-        ))}
       </div>
 
       <div className="form-grid">

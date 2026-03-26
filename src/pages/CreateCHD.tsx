@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -6,28 +6,8 @@ import BatchFileList, { type FileEntry, ARCHIVE_EXTS } from "../components/Batch
 import OutputLog, { type OutputLine } from "../components/OutputLog";
 import ProgressBar from "../components/ProgressBar";
 
-type MediaType = "cd" | "dvd" | "hd" | "raw";
-
-const TABS: { id: MediaType; label: string }[] = [
-  { id: "cd",  label: "CD-ROM" },
-  { id: "dvd", label: "DVD-ROM" },
-  { id: "hd",  label: "Hard Disk" },
-  { id: "raw", label: "Raw" },
-];
-
-const FILTERS: Record<MediaType, { name: string; extensions: string[] }[]> = {
-  cd:  [{ name: "Disc Images", extensions: ["cue", "gdi", "iso"] }],
-  dvd: [{ name: "ISO Images",  extensions: ["iso"] }],
-  hd:  [{ name: "Disk Images", extensions: ["raw", "img", "bin"] }],
-  raw: [{ name: "Raw Images",  extensions: ["raw", "img", "bin"] }],
-};
-
-const FOLDER_EXTS: Record<MediaType, string[]> = {
-  cd:  ["cue", "gdi", "iso"],
-  dvd: ["iso"],
-  hd:  ["raw", "img", "bin"],
-  raw: ["raw", "img", "bin"],
-};
+const ALL_FILTERS = [{ name: "Disc/Disk Images", extensions: ["cue", "gdi", "iso", "raw", "img", "bin", "avi"] }];
+const ALL_FOLDER_EXTS = ["cue", "gdi", "iso", "raw", "img", "bin", "avi"];
 
 interface ArchiveContents { temp_dir: string; files: string[] }
 
@@ -58,23 +38,36 @@ function outputPath(inputPath: string, ext: string, outDir: string): string {
   return `${dir}${dir.endsWith(s) ? "" : s}${basenameNoExt(inputPath)}${ext}`;
 }
 
-function buildArgs(tab: MediaType, inputPath: string, outDir: string, opts: Record<string, string>): string[] {
-  const cmd = tab === "cd" ? "createcd" : tab === "dvd" ? "createdvd" : tab === "hd" ? "createhd" : "createraw";
+async function detectSourceType(path: string): Promise<string> {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "cue" || ext === "gdi") return "cd";
+  if (ext === "avi") return "ld";
+  if (ext === "img" || ext === "bin") return "hd";
+  if (ext === "raw") return "raw";
+  if (ext === "iso") {
+    try {
+      const size = await invoke<number>("get_file_size", { path });
+      return size > 1_000_000_000 ? "dvd" : "cd";
+    } catch {
+      return "cd";
+    }
+  }
+  return "cd";
+}
+
+function buildArgs(mediaType: string, inputPath: string, outDir: string, opts: Record<string, string>): string[] {
+  const cmdMap: Record<string, string> = { cd: "createcd", dvd: "createdvd", hd: "createhd", raw: "createraw", ld: "createld" };
+  const cmd = cmdMap[mediaType] ?? "createcd";
   const out = outputPath(inputPath, ".chd", outDir);
   const args = [cmd, "-i", inputPath, "-o", out];
-  if (opts.compression)  args.push("-c", opts.compression);
-  if (opts.hunksize)     args.push("-hs", opts.hunksize);
-  if (opts.processors)   args.push("-np", opts.processors);
-  if ((tab === "hd" || tab === "raw") && opts.sectorsize) args.push("-ss", opts.sectorsize);
-  if (tab === "hd") {
-    if (opts.size) args.push("-s", opts.size);
-    if (opts.chs)  args.push("-chs", opts.chs);
-  }
+  if (opts.compression) args.push("-c", opts.compression);
+  if (opts.hunksize)    args.push("-hs", opts.hunksize);
+  if (opts.processors)  args.push("-np", opts.processors);
+  if ((mediaType === "hd" || mediaType === "raw") && opts.sectorsize) args.push("-ss", opts.sectorsize);
   return args;
 }
 
 export default function CreateCHD() {
-  const [tab, setTab]           = useState<MediaType>("cd");
   const [files, setFiles]       = useState<FileEntry[]>([]);
   const [inputDir, setInputDir] = useState<string | undefined>();
   const [outDir, setOutDir]     = useState("");
@@ -88,6 +81,7 @@ export default function CreateCHD() {
     }).catch(() => {});
     invoke<number>("get_cpu_threads").then(setMaxThreads).catch(() => {});
   }, []);
+
   const [lines, setLines]         = useState<OutputLine[]>([]);
   const [running, setRunning]     = useState(false);
   const [progress, setProgress]   = useState({ done: 0, total: 0 });
@@ -95,25 +89,21 @@ export default function CreateCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
+  const cancelledRef = useRef(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
-
-  function handleTabChange(t: MediaType) {
-    if (running) return;
-    setTab(t); setFiles([]); setLines([]); setExitStatus(null);
-  }
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
   }
 
   async function handleBrowseOutDir() {
-    const result = await open({ directory: true, multiple: false });
+    const result = await open({ directory: true, multiple: false, defaultPath: outDir || undefined });
     if (result && !Array.isArray(result)) setOutDir(result);
   }
 
-  // Run chdman on a single image file; returns true on success.
   async function runOne(imagePath: string): Promise<boolean> {
-    const args = buildArgs(tab, imagePath, outDir, opts);
+    const mediaType = await detectSourceType(imagePath);
+    const args = buildArgs(mediaType, imagePath, outDir, opts);
     setLines((prev) => [...prev, { stream: "info", line: `> chdman ${args.join(" ")}` }]);
     setProgressLabel("Converting…");
     setJobProgress(0);
@@ -155,6 +145,7 @@ export default function CreateCHD() {
       return;
     }
 
+    cancelledRef.current = false;
     setRunning(true);
     setExitStatus(null);
     setLines([]);
@@ -164,6 +155,7 @@ export default function CreateCHD() {
     let allOk = true;
 
     for (let i = 0; i < files.length; i++) {
+      if (cancelledRef.current) break;
       const file = files[i];
       updateFileStatus(file.id, "running");
       setLines((prev) => [
@@ -221,7 +213,7 @@ export default function CreateCHD() {
     setExitStatus(allOk ? "success" : "error");
   }
 
-  const handleCancel = () => invoke("cancel_chdman").catch(() => {});
+  const handleCancel = () => { cancelledRef.current = true; invoke("cancel_chdman").catch(() => {}); };
 
   return (
     <div className="page-wrapper">
@@ -230,20 +222,12 @@ export default function CreateCHD() {
         <p className="page-subtitle">Convert disc or disk images into CHD format.</p>
       </div>
 
-      <div className="tabs">
-        {TABS.map((t) => (
-          <div key={t.id} className={`tab ${tab === t.id ? "active" : ""}`} onClick={() => handleTabChange(t.id)}>
-            {t.label}
-          </div>
-        ))}
-      </div>
-
       <div className="form-grid">
         <BatchFileList
           files={files}
           onChange={setFiles}
-          filters={FILTERS[tab]}
-          folderExtensions={FOLDER_EXTS[tab]}
+          filters={ALL_FILTERS}
+          folderExtensions={ALL_FOLDER_EXTS}
           defaultDir={inputDir}
           disabled={running}
         />
@@ -308,47 +292,18 @@ export default function CreateCHD() {
             />
           </div>
 
-          {(tab === "hd" || tab === "raw") && (
-            <div className="form-group">
-              <label className="form-label">Sector Size (bytes)</label>
-              <input
-                className="form-input"
-                type="number"
-                value={opts.sectorsize ?? ""}
-                placeholder="512 (default)"
-                min={16}
-                onChange={(e) => setOpt("sectorsize", e.currentTarget.value)}
-                disabled={running}
-              />
-            </div>
-          )}
-
-          {tab === "hd" && (
-            <>
-              <div className="form-group">
-                <label className="form-label">Size in Bytes</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={opts.size ?? ""}
-                  placeholder="Blank HD only (e.g. 1073741824)"
-                  onChange={(e) => setOpt("size", e.currentTarget.value)}
-                  disabled={running}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">CHS (cylinders,heads,sectors)</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={opts.chs ?? ""}
-                  placeholder="e.g. 20,16,63"
-                  onChange={(e) => setOpt("chs", e.currentTarget.value)}
-                  disabled={running}
-                />
-              </div>
-            </>
-          )}
+          <div className="form-group">
+            <label className="form-label">Sector Size (bytes, HD/Raw only)</label>
+            <input
+              className="form-input"
+              type="number"
+              value={opts.sectorsize ?? ""}
+              placeholder="512 (default)"
+              min={16}
+              onChange={(e) => setOpt("sectorsize", e.currentTarget.value)}
+              disabled={running}
+            />
+          </div>
         </div>
       </div>
 
