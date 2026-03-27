@@ -31,9 +31,11 @@ Run `chdman verify` to validate CHD file integrity.
 ### DAT Audit
 Verify CHD or disc image files against No-Intro, Redump, or TOSEC DAT databases.
 
-- Drop `.dat` or `.xml` files into the `dat/` folder next to the executable — they are indexed automatically on startup
+- Use **+ Add File** or **+ Add Folder** in the DAT panel to load `.dat`/`.xml` files from anywhere on your system
+- Alternatively, drop `.dat` or `.xml` files into the `dat/` folder next to the executable — they are indexed automatically on startup
+- Extra DAT sources are saved in `settings.json` and restored between sessions
 - Add individual files or entire folders to audit
-- CHD files are verified using the SHA1 reported by `chdman info`
+- CHD files are matched against both the Data SHA1 and the top-level CHD SHA1 reported by `chdman info`, covering No-Intro, Redump, and MAME DAT formats
 - Non-CHD files (ISO, BIN, etc.) are verified by direct SHA1/CRC32 hash
 - Results show per-file match status and game name from the DAT
 
@@ -45,7 +47,7 @@ After every batch Create/Extract/Convert run, a summary table shows each file's 
 1. Download or build `romcruncher.exe`
 2. Place it in a folder — the app creates `input/`, `output/`, `temp/`, and `dat/` subfolders automatically
 3. Open **Settings** and set the path to `chdman.exe` (available as part of a MAME installation)
-4. Optionally drop DAT files into the `dat/` subfolder
+4. Optionally load DAT files — either drop them into the `dat/` subfolder or use **+ Add File** / **+ Add Folder** in the DAT Audit panel to point to DAT files anywhere on your system
 
 ## Building from Source
 

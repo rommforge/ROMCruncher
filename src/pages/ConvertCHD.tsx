@@ -66,29 +66,8 @@ export default function ConvertCHD() {
 
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
-  const [mediaTypeOverride, setMediaTypeOverride] = useState("auto");
   const [force, setForce] = useState(false);
-  const [deleteOnVerify, setDeleteOnVerify] = useState(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
-
-  async function runVerify(outputPath: string): Promise<boolean> {
-    setProgressLabel("Verifying…");
-    setJobProgress(null);
-    setLines((prev) => [...prev, { stream: "info", line: "→ Verifying CHD integrity…" }]);
-    const args = ["verify", "-i", outputPath];
-    const unlistenOutput = await listen<{ stream: string; line: string }>("chdman-output", (e) => {
-      setLines((prev) => [...prev, { stream: e.payload.stream as OutputLine["stream"], line: e.payload.line }]);
-    });
-    try {
-      const code = await invoke<number>("run_chdman", { args });
-      return code === 0;
-    } catch {
-      return false;
-    } finally {
-      unlistenOutput();
-      setJobProgress(null);
-    }
-  }
 
   async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
     if (datIndex.size === 0) return { datStatus: "skipped" };
@@ -153,15 +132,11 @@ export default function ConvertCHD() {
   async function convertOne(inputPath: string): Promise<{ ok: boolean; outputPath: string }> {
     const out = outputChdPath(inputPath, outDir);
     let mediaType: string;
-    if (mediaTypeOverride !== "auto") {
-      mediaType = mediaTypeOverride;
-    } else {
-      try {
-        mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
-      } catch (e) {
-        setLines((prev) => [...prev, { stream: "error", line: `→ ${String(e)}` }]);
-        return { ok: false, outputPath: out };
-      }
+    try {
+      mediaType = await invoke<string>("detect_chd_type", { path: inputPath });
+    } catch (e) {
+      setLines((prev) => [...prev, { stream: "error", line: `→ ${String(e)}` }]);
+      return { ok: false, outputPath: out };
     }
 
     const intExt = INTERMEDIATE_EXT[mediaType] ?? ".cue";
@@ -263,19 +238,6 @@ export default function ConvertCHD() {
         const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
         reportEntries.push({ name: basename(file.path), ok, ...dat });
 
-        if (ok && deleteOnVerify) {
-          const verified = await runVerify(result.outputPath);
-          if (verified) {
-            try {
-              await invoke("delete_file", { path: file.path });
-              setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
-            } catch (e) {
-              setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
-            }
-          } else {
-            setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
-          }
-        }
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -331,23 +293,6 @@ export default function ConvertCHD() {
 
         <div className="options-grid">
           <div className="form-group">
-            <label className="form-label">Media Type Override</label>
-            <select
-              className="form-input"
-              value={mediaTypeOverride}
-              onChange={(e) => setMediaTypeOverride(e.currentTarget.value)}
-              disabled={running}
-            >
-              <option value="auto">Auto-Detect</option>
-              <option value="cd">CD-ROM</option>
-              <option value="dvd">DVD-ROM</option>
-              <option value="hd">Hard Disk</option>
-              <option value="raw">Raw</option>
-              <option value="ld">LaserDisc</option>
-            </select>
-          </div>
-
-          <div className="form-group">
             <label className="form-label">Compression</label>
             <input
               className="form-input"
@@ -398,17 +343,6 @@ export default function ConvertCHD() {
             </label>
           </div>
 
-          <div className="form-group form-group-check">
-            <label className="form-check">
-              <input
-                type="checkbox"
-                checked={deleteOnVerify}
-                onChange={(e) => setDeleteOnVerify(e.currentTarget.checked)}
-                disabled={running}
-              />
-              Delete source after successful verify
-            </label>
-          </div>
         </div>
       </div>
 

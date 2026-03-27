@@ -89,27 +89,7 @@ export default function CreateCHD() {
 
   const { datIndex } = useDat();
   const cancelledRef = useRef(false);
-  const [deleteOnVerify, setDeleteOnVerify] = useState(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
-
-  async function runVerify(outputPath: string): Promise<boolean> {
-    setProgressLabel("Verifying…");
-    setJobProgress(null);
-    setLines((prev) => [...prev, { stream: "info", line: "→ Verifying CHD integrity…" }]);
-    const args = ["verify", "-i", outputPath];
-    const unlistenOutput = await listen<{ stream: string; line: string }>("chdman-output", (e) => {
-      setLines((prev) => [...prev, { stream: e.payload.stream as OutputLine["stream"], line: e.payload.line }]);
-    });
-    try {
-      const code = await invoke<number>("run_chdman", { args });
-      return code === 0;
-    } catch {
-      return false;
-    } finally {
-      unlistenOutput();
-      setJobProgress(null);
-    }
-  }
 
   function updateFileStatus(id: string, status: FileEntry["status"]) {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
@@ -253,24 +233,6 @@ export default function CreateCHD() {
         const dat = ok ? await checkDat(result.outputPath) : { datStatus: "skipped" as const };
         reportEntries.push({ name: basename(file.path), ok, ...dat });
 
-        if (ok && deleteOnVerify) {
-          const ext = file.path.split(".").pop()?.toLowerCase() ?? "";
-          if (ext === "cue" || ext === "gdi") {
-            setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: multi-file source (.cue/.gdi) — remove companion files manually" }]);
-          } else {
-            const verified = await runVerify(result.outputPath);
-            if (verified) {
-              try {
-                await invoke("delete_file", { path: file.path });
-                setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
-              } catch (e) {
-                setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
-              }
-            } else {
-              setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
-            }
-          }
-        }
       }
 
       updateFileStatus(file.id, ok ? "success" : "error");
@@ -406,17 +368,6 @@ export default function CreateCHD() {
             </label>
           </div>
 
-          <div className="form-group form-group-check">
-            <label className="form-check">
-              <input
-                type="checkbox"
-                checked={deleteOnVerify}
-                onChange={(e) => setDeleteOnVerify(e.currentTarget.checked)}
-                disabled={running}
-              />
-              Delete source after successful verify
-            </label>
-          </div>
         </div>
       </div>
 

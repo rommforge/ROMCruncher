@@ -833,11 +833,6 @@ async fn hash_file(app: AppHandle, path: String) -> Result<FileHashes, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn delete_file(path: String) -> Result<(), String> {
-    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete \"{}\": {}", path, e))
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ensure input / output / temp / dat folders exist next to the executable.
@@ -875,7 +870,6 @@ pub fn run() {
             parse_dat,
             hash_file,
             get_chd_data_sha1,
-            delete_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
