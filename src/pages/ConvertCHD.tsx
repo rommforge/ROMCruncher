@@ -264,20 +264,16 @@ export default function ConvertCHD() {
         reportEntries.push({ name: basename(file.path), ok, ...dat });
 
         if (ok && deleteOnVerify) {
-          if (datIndex.size > 0 && dat.datStatus !== "match") {
-            setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: no DAT match found" }]);
-          } else {
-            const verified = await runVerify(result.outputPath);
-            if (verified) {
-              try {
-                await invoke("delete_file", { path: file.path });
-                setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
-              } catch (e) {
-                setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
-              }
-            } else {
-              setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
+          const verified = await runVerify(result.outputPath);
+          if (verified) {
+            try {
+              await invoke("delete_file", { path: file.path });
+              setLines((prev) => [...prev, { stream: "info", line: `→ Source deleted: ${basename(file.path)}` }]);
+            } catch (e) {
+              setLines((prev) => [...prev, { stream: "error", line: `→ Delete failed: ${String(e)}` }]);
             }
+          } else {
+            setLines((prev) => [...prev, { stream: "error", line: "→ Verify failed — source kept" }]);
           }
         }
       }
@@ -410,7 +406,7 @@ export default function ConvertCHD() {
                 onChange={(e) => setDeleteOnVerify(e.currentTarget.checked)}
                 disabled={running}
               />
-              Delete source after successful verify{datIndex.size > 0 ? " + DAT match" : ""}
+              Delete source after successful verify
             </label>
           </div>
         </div>

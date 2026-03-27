@@ -257,8 +257,6 @@ export default function CreateCHD() {
           const ext = file.path.split(".").pop()?.toLowerCase() ?? "";
           if (ext === "cue" || ext === "gdi") {
             setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: multi-file source (.cue/.gdi) — remove companion files manually" }]);
-          } else if (datIndex.size > 0 && dat.datStatus !== "match") {
-            setLines((prev) => [...prev, { stream: "info", line: "→ Delete skipped: no DAT match found" }]);
           } else {
             const verified = await runVerify(result.outputPath);
             if (verified) {
@@ -416,7 +414,7 @@ export default function CreateCHD() {
                 onChange={(e) => setDeleteOnVerify(e.currentTarget.checked)}
                 disabled={running}
               />
-              Delete source after successful verify{datIndex.size > 0 ? " + DAT match" : ""}
+              Delete source after successful verify
             </label>
           </div>
         </div>
