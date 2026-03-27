@@ -252,24 +252,28 @@ async fn run_chdman(
 }
 
 #[tauri::command]
-fn scan_folder(dir: String, extensions: Vec<String>) -> Result<Vec<String>, String> {
-    let path = std::path::Path::new(&dir);
-    let mut files: Vec<String> = std::fs::read_dir(path)
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let p = entry.path();
-            if !p.is_file() { return None; }
-            let ext = p.extension()?.to_string_lossy().to_lowercase();
-            if extensions.iter().any(|e| e.to_lowercase() == ext) {
-                Some(p.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-    files.sort();
-    Ok(files)
+async fn scan_folder(dir: String, extensions: Vec<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::Path::new(&dir);
+        let mut files: Vec<String> = std::fs::read_dir(path)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let p = entry.path();
+                if !p.is_file() { return None; }
+                let ext = p.extension()?.to_string_lossy().to_lowercase();
+                if extensions.iter().any(|e| e.to_lowercase() == ext) {
+                    Some(p.to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------------------
@@ -448,27 +452,31 @@ fn get_cpu_threads() -> usize {
 }
 
 #[tauri::command]
-fn get_chdman_version(path: String) -> Result<String, String> {
-    let output = new_command(&path)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("Failed to run chdman: {}", e))?;
+async fn get_chdman_version(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = new_command(&path)
+            .arg("--version")
+            .output()
+            .map_err(|e| format!("Failed to run chdman: {}", e))?;
 
-    // chdman prints version info to stderr (e.g. "chdman 0.264 (MAME)")
-    let text = if output.stdout.is_empty() {
-        String::from_utf8_lossy(&output.stderr).to_string()
-    } else {
-        String::from_utf8_lossy(&output.stdout).to_string()
-    };
+        // chdman prints version info to stderr (e.g. "chdman 0.264 (MAME)")
+        let text = if output.stdout.is_empty() {
+            String::from_utf8_lossy(&output.stderr).to_string()
+        } else {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        };
 
-    let version = text
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+        let version = text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("unknown")
+            .trim()
+            .to_string();
 
-    Ok(version)
+        Ok(version)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -586,25 +594,29 @@ pub struct FileHashes {
 
 /// Ensure the dat folder exists and return all .dat/.xml files inside it.
 #[tauri::command]
-fn scan_dat_folder() -> Result<Vec<String>, String> {
-    let dir = exe_dir()?.join("dat");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let mut files: Vec<String> = std::fs::read_dir(&dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let p = e.path();
-            if !p.is_file() { return None; }
-            let ext = p.extension()?.to_string_lossy().to_lowercase();
-            if ext == "dat" || ext == "xml" {
-                Some(p.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-    files.sort();
-    Ok(files)
+async fn scan_dat_folder() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = exe_dir()?.join("dat");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mut files: Vec<String> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let p = e.path();
+                if !p.is_file() { return None; }
+                let ext = p.extension()?.to_string_lossy().to_lowercase();
+                if ext == "dat" || ext == "xml" {
+                    Some(p.to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Strip a `<!DOCTYPE ...>` declaration from XML content.
@@ -630,58 +642,62 @@ fn strip_doctype(xml: &str) -> String {
 
 /// Parse a No-Intro / Redump / TOSEC DAT file (XML format).
 #[tauri::command]
-fn parse_dat(path: String) -> Result<ParsedDat, String> {
-    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let content = strip_doctype(&raw);
-    let doc = roxmltree::Document::parse(&content).map_err(|e| e.to_string())?;
+async fn parse_dat(path: String) -> Result<ParsedDat, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let content = strip_doctype(&raw);
+        let doc = roxmltree::Document::parse(&content).map_err(|e| e.to_string())?;
 
-    let root = doc.root_element();
+        let root = doc.root_element();
 
-    // Read header fields
-    let header = root.children().find(|n| n.tag_name().name() == "header");
-    let header_name = header
-        .and_then(|h| h.children().find(|n| n.tag_name().name() == "name"))
-        .and_then(|n| n.text())
-        .unwrap_or("")
-        .to_string();
-    let header_version = header
-        .and_then(|h| h.children().find(|n| n.tag_name().name() == "version"))
-        .and_then(|n| n.text())
-        .unwrap_or("")
-        .to_string();
-
-    let mut games: Vec<DatGame> = Vec::new();
-
-    for node in root.children() {
-        let tag = node.tag_name().name();
-        if tag != "game" && tag != "machine" { continue; }
-
-        let name = node.attribute("name").unwrap_or("").to_string();
-        let description = node
-            .children()
-            .find(|n| n.tag_name().name() == "description")
+        // Read header fields
+        let header = root.children().find(|n| n.tag_name().name() == "header");
+        let header_name = header
+            .and_then(|h| h.children().find(|n| n.tag_name().name() == "name"))
             .and_then(|n| n.text())
-            .unwrap_or(&name)
+            .unwrap_or("")
+            .to_string();
+        let header_version = header
+            .and_then(|h| h.children().find(|n| n.tag_name().name() == "version"))
+            .and_then(|n| n.text())
+            .unwrap_or("")
             .to_string();
 
-        let mut roms: Vec<DatRom> = Vec::new();
-        for child in node.children() {
-            let ct = child.tag_name().name();
-            if ct != "rom" && ct != "disk" { continue; }
-            roms.push(DatRom {
-                name: child.attribute("name").unwrap_or("").to_string(),
-                sha1: child.attribute("sha1").map(|s| s.to_lowercase()),
-                crc:  child.attribute("crc").map(|s| s.to_lowercase()),
-                is_disk: ct == "disk",
-            });
+        let mut games: Vec<DatGame> = Vec::new();
+
+        for node in root.children() {
+            let tag = node.tag_name().name();
+            if tag != "game" && tag != "machine" { continue; }
+
+            let name = node.attribute("name").unwrap_or("").to_string();
+            let description = node
+                .children()
+                .find(|n| n.tag_name().name() == "description")
+                .and_then(|n| n.text())
+                .unwrap_or(&name)
+                .to_string();
+
+            let mut roms: Vec<DatRom> = Vec::new();
+            for child in node.children() {
+                let ct = child.tag_name().name();
+                if ct != "rom" && ct != "disk" { continue; }
+                roms.push(DatRom {
+                    name: child.attribute("name").unwrap_or("").to_string(),
+                    sha1: child.attribute("sha1").map(|s| s.to_lowercase()),
+                    crc:  child.attribute("crc").map(|s| s.to_lowercase()),
+                    is_disk: ct == "disk",
+                });
+            }
+
+            if !roms.is_empty() {
+                games.push(DatGame { name, description, roms });
+            }
         }
 
-        if !roms.is_empty() {
-            games.push(DatGame { name, description, roms });
-        }
-    }
-
-    Ok(ParsedDat { header_name, header_version, games })
+        Ok(ParsedDat { header_name, header_version, games })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// For CHD files, extract the Data SHA1 reported by `chdman info`.

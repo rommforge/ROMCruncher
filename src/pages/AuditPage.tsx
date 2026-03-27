@@ -3,21 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import ProgressBar from "../components/ProgressBar";
+import OutputLog, { type OutputLine } from "../components/OutputLog";
+import { type ReportEntry } from "../components/JobReport";
 import { useDat, type DatInfo } from "../context/DatContext";
-
-interface AuditResult {
-  path: string;
-  status: "match" | "no-match" | "error";
-  gameName?: string;
-  datFile?: string;
-  message?: string;
-}
 
 export default function AuditPage() {
   const { datIndex, datInfos, parseErrors, loading, refreshDats } = useDat();
 
   const [filePaths, setFilePaths] = useState<string[]>([]);
-  const [results, setResults] = useState<AuditResult[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const [lines, setLines] = useState<OutputLine[]>([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [jobProgress, setJobProgress] = useState<number | null>(null);
@@ -37,23 +32,27 @@ export default function AuditPage() {
   async function handleAddFolder() {
     const result = await open({ directory: true, multiple: false });
     if (!result || Array.isArray(result)) return;
-    const found = await invoke<string[]>("scan_folder", {
-      dir: result,
-      extensions: ["chd", "cue", "gdi", "iso", "bin", "img", "raw", "avi"],
-    }).catch(() => [] as string[]);
-    setFilePaths((prev) => [...prev, ...found.filter((p) => !prev.includes(p))]);
+    setScanning(true);
+    try {
+      const found = await invoke<string[]>("scan_folder", {
+        dir: result,
+        extensions: ["chd", "cue", "gdi", "iso", "bin", "img", "raw", "avi"],
+      }).catch(() => [] as string[]);
+      setFilePaths((prev) => [...prev, ...found.filter((p) => !prev.includes(p))]);
+    } finally {
+      setScanning(false);
+    }
   }
 
   function removeFile(path: string) {
     setFilePaths((prev) => prev.filter((p) => p !== path));
   }
 
-  async function auditOne(filePath: string): Promise<AuditResult> {
+  async function auditOne(filePath: string): Promise<{ status: "match" | "no-match" | "error"; gameName?: string; datFile?: string; message?: string }> {
     const isChd = filePath.split(".").pop()?.toLowerCase() === "chd";
     try {
       let match;
       if (isChd) {
-        // DATs store the CHD Data SHA1, not a hash of the file itself.
         const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
         match = datIndex.get(sha1);
       } else {
@@ -67,12 +66,10 @@ export default function AuditPage() {
           setJobProgress(null);
         }
       }
-      if (match) {
-        return { path: filePath, status: "match", gameName: match.gameName, datFile: match.datFile };
-      }
-      return { path: filePath, status: "no-match" };
+      if (match) return { status: "match", gameName: match.gameName, datFile: match.datFile };
+      return { status: "no-match" };
     } catch (e) {
-      return { path: filePath, status: "error", message: String(e) };
+      return { status: "error", message: String(e) };
     }
   }
 
@@ -80,16 +77,49 @@ export default function AuditPage() {
     if (datIndex.size === 0) return;
     cancelledRef.current = false;
     setRunning(true);
-    setResults([]);
+    setLines([]);
     setProgress({ done: 0, total: filePaths.length });
+
+    const reportEntries: ReportEntry[] = [];
 
     for (let i = 0; i < filePaths.length; i++) {
       if (cancelledRef.current) break;
       const p = filePaths[i];
-      setCurrentFile(p.replace(/\\/g, "/").split("/").pop() ?? p);
+      const name = p.replace(/\\/g, "/").split("/").pop() ?? p;
+      setCurrentFile(name);
+      setLines((prev) => [...prev, { stream: "info", line: `[${i + 1}/${filePaths.length}] ${name}` }]);
+
       const result = await auditOne(p);
-      setResults((prev) => [...prev, result]);
+
+      if (result.status === "match") {
+        setLines((prev) => [...prev, { stream: "success", line: `  ✓ ${result.gameName} [${result.datFile}]` }]);
+        reportEntries.push({ name, ok: true, datStatus: "match", gameName: result.gameName, datFile: result.datFile });
+      } else if (result.status === "no-match") {
+        setLines((prev) => [...prev, { stream: "error", line: `  – No match in any DAT` }]);
+        reportEntries.push({ name, ok: false, datStatus: "no-match" });
+      } else {
+        setLines((prev) => [...prev, { stream: "error", line: `  ✗ ${result.message}` }]);
+        reportEntries.push({ name, ok: false, datStatus: "error" });
+      }
+
       setProgress({ done: i + 1, total: filePaths.length });
+    }
+
+    if (reportEntries.length > 1) {
+      const matched   = reportEntries.filter((e) => e.datStatus === "match").length;
+      const unmatched = reportEntries.filter((e) => e.datStatus !== "match").length;
+      const failed    = reportEntries.filter((e) => e.datStatus !== "match");
+      const summary: OutputLine[] = [
+        { stream: "info", line: "\n" + "─".repeat(60) },
+        { stream: unmatched > 0 ? "error" : "success", line: `  ${matched} matched · ${unmatched} unmatched` },
+      ];
+      if (failed.length > 0) {
+        summary.push({ stream: "info", line: "\n  Unmatched files:" });
+        for (const e of failed) {
+          summary.push({ stream: "error", line: `    – ${e.name}` });
+        }
+      }
+      setLines((prev) => [...prev, ...summary]);
     }
 
     setRunning(false);
@@ -97,10 +127,6 @@ export default function AuditPage() {
   }
 
   const handleCancel = () => { cancelledRef.current = true; };
-
-  const matchCount   = results.filter((r) => r.status === "match").length;
-  const noMatchCount = results.filter((r) => r.status === "no-match").length;
-  const errorCount   = results.filter((r) => r.status === "error").length;
 
   return (
     <div className="page-wrapper">
@@ -147,7 +173,7 @@ export default function AuditPage() {
       <div className="form-group">
         <div className="file-list-actions">
           <button className="btn btn-ghost btn-sm" onClick={handleAddFiles} disabled={running}>+ Add Files…</button>
-          <button className="btn btn-ghost btn-sm" onClick={handleAddFolder} disabled={running}>+ Add Folder…</button>
+          <button className="btn btn-ghost btn-sm" onClick={handleAddFolder} disabled={running || scanning}>{scanning ? "Scanning…" : "+ Add Folder…"}</button>
           {filePaths.length > 0 && (
             <button className="btn btn-ghost btn-sm" onClick={() => setFilePaths([])} disabled={running}>Clear All</button>
           )}
@@ -179,7 +205,7 @@ export default function AuditPage() {
         ) : (
           <>
             <button className="btn btn-danger btn-sm" onClick={handleCancel}>Cancel</button>
-            <ProgressBar value={jobProgress} label={currentFile || "Hashing…"} />
+            <ProgressBar value={jobProgress} label={currentFile || "Auditing…"} />
           </>
         )}
         {running && progress.total > 1 && (
@@ -190,38 +216,7 @@ export default function AuditPage() {
         )}
       </div>
 
-      {/* Results */}
-      {results.length > 0 && (
-        <div className="audit-results">
-          <div className="audit-results-header">
-            <span>Results</span>
-            <span className="audit-summary">
-              <span className="audit-count match">{matchCount} matched</span>
-              {noMatchCount > 0 && <span className="audit-count no-match">{noMatchCount} unmatched</span>}
-              {errorCount   > 0 && <span className="audit-count error">{errorCount} error{errorCount > 1 ? "s" : ""}</span>}
-            </span>
-          </div>
-          <div className="audit-result-list">
-            {results.map((r, i) => (
-              <div key={i} className={`audit-result-row ${r.status}`}>
-                <span className="audit-result-icon">
-                  {r.status === "match"    ? "✓" : r.status === "no-match" ? "–" : "✗"}
-                </span>
-                <span className="audit-result-path" title={r.path}>
-                  {r.path.replace(/\\/g, "/").split("/").pop()}
-                </span>
-                <span className="audit-result-detail">
-                  {r.status === "match"
-                    ? `${r.gameName} [${r.datFile}]`
-                    : r.status === "no-match"
-                    ? "No match in any DAT"
-                    : r.message}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <OutputLog lines={lines} onClear={() => setLines([])} />
     </div>
   );
 }

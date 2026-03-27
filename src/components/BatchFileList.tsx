@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -52,6 +53,8 @@ export default function BatchFileList({
   defaultDir,
   disabled,
 }: BatchFileListProps) {
+  const [scanning, setScanning] = useState(false);
+
   async function handleAddFiles() {
     const allExts = [...filters.flatMap((f) => f.extensions), ...ARCHIVE_EXTS];
     const allFilters = [
@@ -69,11 +72,16 @@ export default function BatchFileList({
     const result = await open({ directory: true, multiple: false, defaultPath: defaultDir });
     if (!result || Array.isArray(result)) return;
     const allExts = [...folderExtensions, ...ARCHIVE_EXTS];
-    const found = await invoke<string[]>("scan_folder", {
-      dir: result,
-      extensions: allExts,
-    });
-    onChange(mergeFiles(files, found));
+    setScanning(true);
+    try {
+      const found = await invoke<string[]>("scan_folder", {
+        dir: result,
+        extensions: allExts,
+      });
+      onChange(mergeFiles(files, found));
+    } finally {
+      setScanning(false);
+    }
   }
 
   function handleRemove(id: string) {
@@ -100,9 +108,9 @@ export default function BatchFileList({
           type="button"
           className="btn btn-ghost btn-sm"
           onClick={handleAddFolder}
-          disabled={disabled}
+          disabled={disabled || scanning}
         >
-          + Add Folder
+          {scanning ? "Scanning…" : "+ Add Folder"}
         </button>
         {files.length > 0 && (
           <button
