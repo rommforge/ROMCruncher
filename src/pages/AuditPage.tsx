@@ -8,7 +8,7 @@ import { type ReportEntry } from "../components/JobReport";
 import { useDat, type DatInfo } from "../context/DatContext";
 
 export default function AuditPage() {
-  const { datIndex, datInfos, parseErrors, loading, refreshDats } = useDat();
+  const { datIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath } = useDat();
 
   const [filePaths, setFilePaths] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -18,6 +18,25 @@ export default function AuditPage() {
   const [jobProgress, setJobProgress] = useState<number | null>(null);
   const [currentFile, setCurrentFile] = useState("");
   const cancelledRef = useRef(false);
+
+  async function handleAddDatFiles() {
+    const datFolder = await invoke<string>("get_dat_folder").catch(() => undefined);
+    const result = await open({
+      multiple: true,
+      defaultPath: datFolder,
+      filters: [{ name: "DAT Files", extensions: ["dat", "xml"] }],
+    });
+    if (!result) return;
+    const paths = Array.isArray(result) ? result : [result];
+    for (const p of paths) await addDatPath(p);
+  }
+
+  async function handleAddDatFolder() {
+    const datFolder = await invoke<string>("get_dat_folder").catch(() => undefined);
+    const result = await open({ directory: true, multiple: false, defaultPath: datFolder });
+    if (!result || Array.isArray(result)) return;
+    await addDatPath(result);
+  }
 
   async function handleAddFiles() {
     const result = await open({
@@ -53,8 +72,8 @@ export default function AuditPage() {
     try {
       let match;
       if (isChd) {
-        const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
-        match = datIndex.get(sha1);
+        const sha1s = await invoke<string[]>("get_chd_data_sha1", { path: filePath });
+        match = sha1s.reduce<ReturnType<typeof datIndex.get>>((m, s) => m ?? datIndex.get(s), undefined);
       } else {
         const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
         setJobProgress(0);
@@ -141,10 +160,22 @@ export default function AuditPage() {
           <span className="form-section-title" style={{ marginBottom: 0 }}>
             Loaded DATs {loading ? "(loading…)" : `(${datInfos.length})`}
           </span>
-          <button className="btn btn-ghost btn-sm" onClick={refreshDats} disabled={loading}>
-            ↺ Refresh
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn-ghost btn-sm" onClick={handleAddDatFiles} disabled={loading}>+ Add File</button>
+            <button className="btn btn-ghost btn-sm" onClick={handleAddDatFolder} disabled={loading}>+ Add Folder</button>
+            <button className="btn btn-ghost btn-sm" onClick={refreshDats} disabled={loading}>↺ Refresh</button>
+          </div>
         </div>
+        {datExtraPaths.length > 0 && (
+          <div className="audit-dat-sources">
+            {datExtraPaths.map((p) => (
+              <div key={p} className="audit-dat-source-item">
+                <span className="audit-dat-source-path" title={p}>{p}</span>
+                <button className="file-remove-btn" onClick={() => removeDatPath(p)} title="Remove source">×</button>
+              </div>
+            ))}
+          </div>
+        )}
         {parseErrors.length > 0 && (
           <div className="audit-parse-errors">
             {parseErrors.map((e, i) => (
@@ -154,7 +185,7 @@ export default function AuditPage() {
         )}
         {datInfos.length === 0 && parseErrors.length === 0 && (
           <p className="audit-dats-empty">
-            No DAT files found. Place <code>.dat</code> or <code>.xml</code> files in the <code>dat/</code> folder next to the app executable.
+            No DAT files found. Use <strong>+ Add File</strong> or <strong>+ Add Folder</strong> above, or place <code>.dat</code>/<code>.xml</code> files in the <code>dat/</code> folder next to the app.
           </p>
         )}
         {datInfos.length > 0 && (

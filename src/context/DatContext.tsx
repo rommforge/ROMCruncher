@@ -25,6 +25,9 @@ interface DatContextValue {
   parseErrors: string[];
   loading: boolean;
   refreshDats: () => void;
+  datExtraPaths: string[];
+  addDatPath: (path: string) => Promise<void>;
+  removeDatPath: (path: string) => Promise<void>;
 }
 
 const DatContext = createContext<DatContextValue>({
@@ -33,17 +36,22 @@ const DatContext = createContext<DatContextValue>({
   parseErrors: [],
   loading: false,
   refreshDats: () => {},
+  datExtraPaths: [],
+  addDatPath: async () => {},
+  removeDatPath: async () => {},
 });
 
 interface DatRom { name: string; sha1: string | null; crc: string | null; is_disk: boolean }
 interface DatGame { name: string; description: string; roms: DatRom[] }
 interface ParsedDat { header_name: string; header_version: string; games: DatGame[] }
+interface Settings { chdman_path: string; theme: string; dat_extra_paths: string[] }
 
 export function DatProvider({ children }: { children: ReactNode }) {
-  const [datIndex, setDatIndex]       = useState<DatIndex>(new Map());
-  const [datInfos, setDatInfos]       = useState<DatInfo[]>([]);
-  const [parseErrors, setParseErrors] = useState<string[]>([]);
-  const [loading, setLoading]         = useState(false);
+  const [datIndex, setDatIndex]         = useState<DatIndex>(new Map());
+  const [datInfos, setDatInfos]         = useState<DatInfo[]>([]);
+  const [parseErrors, setParseErrors]   = useState<string[]>([]);
+  const [loading, setLoading]           = useState(false);
+  const [datExtraPaths, setDatExtraPaths] = useState<string[]>([]);
 
   const refreshDats = useCallback(async () => {
     setLoading(true);
@@ -91,10 +99,37 @@ export function DatProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Load extra paths from settings on mount
+  useEffect(() => {
+    invoke<Settings>("get_settings")
+      .then((s) => setDatExtraPaths(s.dat_extra_paths ?? []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => { refreshDats(); }, [refreshDats]);
 
+  const addDatPath = useCallback(async (path: string) => {
+    setDatExtraPaths((prev) => {
+      if (prev.includes(path)) return prev;
+      const next = [...prev, path];
+      invoke("save_dat_paths", { paths: next }).catch(() => {});
+      return next;
+    });
+    // Refresh after state settles
+    setTimeout(refreshDats, 50);
+  }, [refreshDats]);
+
+  const removeDatPath = useCallback(async (path: string) => {
+    setDatExtraPaths((prev) => {
+      const next = prev.filter((p) => p !== path);
+      invoke("save_dat_paths", { paths: next }).catch(() => {});
+      return next;
+    });
+    setTimeout(refreshDats, 50);
+  }, [refreshDats]);
+
   return (
-    <DatContext.Provider value={{ datIndex, datInfos, parseErrors, loading, refreshDats }}>
+    <DatContext.Provider value={{ datIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath }}>
       {children}
     </DatContext.Provider>
   );

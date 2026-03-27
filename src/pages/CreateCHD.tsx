@@ -120,8 +120,8 @@ export default function CreateCHD() {
     try {
       setProgressLabel("Verifying…");
       setJobProgress(null);
-      const sha1 = await invoke<string>("get_chd_data_sha1", { path: filePath });
-      const match = datIndex.get(sha1);
+      const sha1s = await invoke<string[]>("get_chd_data_sha1", { path: filePath });
+      const match = sha1s.reduce<ReturnType<typeof datIndex.get>>((m, s) => m ?? datIndex.get(s), undefined);
       if (match) {
         setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
         return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };

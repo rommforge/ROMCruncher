@@ -24,11 +24,13 @@ pub struct Settings {
     pub chdman_path: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub dat_extra_paths: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { chdman_path: String::new(), theme: default_theme() }
+        Self { chdman_path: String::new(), theme: default_theme(), dat_extra_paths: Vec::new() }
     }
 }
 
@@ -592,10 +594,18 @@ pub struct FileHashes {
     pub crc32: String,
 }
 
-/// Ensure the dat folder exists and return all .dat/.xml files inside it.
+fn is_dat_file(p: &std::path::Path) -> bool {
+    if !p.is_file() { return false; }
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    ext == "dat" || ext == "xml"
+}
+
+/// Ensure the dat folder exists and return all .dat/.xml files inside it,
+/// plus any extra files/folders configured in settings.
 #[tauri::command]
 async fn scan_dat_folder() -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_settings().unwrap_or_default();
         let dir = exe_dir()?.join("dat");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let mut files: Vec<String> = std::fs::read_dir(&dir)
@@ -603,20 +613,51 @@ async fn scan_dat_folder() -> Result<Vec<String>, String> {
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let p = e.path();
-                if !p.is_file() { return None; }
-                let ext = p.extension()?.to_string_lossy().to_lowercase();
-                if ext == "dat" || ext == "xml" {
-                    Some(p.to_string_lossy().to_string())
-                } else {
-                    None
-                }
+                if is_dat_file(&p) { Some(p.to_string_lossy().to_string()) } else { None }
             })
             .collect();
+
+        for extra in &settings.dat_extra_paths {
+            let p = std::path::Path::new(extra);
+            if p.is_file() {
+                let s = extra.clone();
+                if is_dat_file(p) && !files.contains(&s) {
+                    files.push(s);
+                }
+            } else if p.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(p) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let fp = entry.path();
+                        if is_dat_file(&fp) {
+                            let s = fp.to_string_lossy().to_string();
+                            if !files.contains(&s) { files.push(s); }
+                        }
+                    }
+                }
+            }
+        }
+
         files.sort();
         Ok(files)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Return the path to the default dat/ folder next to the executable.
+#[tauri::command]
+fn get_dat_folder() -> Result<String, String> {
+    Ok(exe_dir()?.join("dat").to_string_lossy().to_string())
+}
+
+/// Persist extra DAT source paths (files or folders) without touching other settings.
+#[tauri::command]
+fn save_dat_paths(paths: Vec<String>) -> Result<(), String> {
+    let mut settings = load_settings().unwrap_or_default();
+    settings.dat_extra_paths = paths;
+    let file = get_settings_path()?;
+    let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&file, content).map_err(|e| e.to_string())
 }
 
 /// Strip a `<!DOCTYPE ...>` declaration from XML content.
@@ -700,10 +741,13 @@ async fn parse_dat(path: String) -> Result<ParsedDat, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// For CHD files, extract the Data SHA1 reported by `chdman info`.
-/// This is what DAT files (No-Intro/Redump) store — NOT the SHA1 of the CHD file itself.
+/// For CHD files, return all SHA1 hashes from `chdman info` so callers can match against any DAT format.
+/// Returns [data_sha1, chd_sha1] — both are tried because different DAT sources store different hashes:
+///   - No-Intro / Redump <disk> entries store the Data SHA1 (SHA1 of raw disc content)
+///   - MAME / some Redump DATs store the top-level CHD SHA1 (SHA1 of the CHD file itself)
+/// Handles both old chdman output ("SHA1:", "Data SHA1:") and new ("CHD sha1:", "Data sha1:").
 #[tauri::command]
-async fn get_chd_data_sha1(path: String) -> Result<String, String> {
+async fn get_chd_data_sha1(path: String) -> Result<Vec<String>, String> {
     let settings = load_settings()?;
     if settings.chdman_path.is_empty() {
         return Err("chdman path is not configured".to_string());
@@ -715,17 +759,34 @@ async fn get_chd_data_sha1(path: String) -> Result<String, String> {
             .map_err(|e| format!("Failed to run chdman: {}", e))?;
         let text = String::from_utf8_lossy(&output.stdout).to_string()
             + &String::from_utf8_lossy(&output.stderr);
+
+        let mut data_sha1: Option<String> = None;
+        let mut chd_sha1:  Option<String> = None;
+
         for line in text.lines() {
-            let trimmed = line.trim();
-            // Match "SHA1:" but not "Data SHA1:" — DATs store the top-level SHA1.
-            if trimmed.starts_with("SHA1:") && !trimmed.starts_with("Data SHA1:") {
-                let hash = trimmed["SHA1:".len()..].trim().to_lowercase();
-                if !hash.is_empty() {
-                    return Ok(hash);
+            let lower = line.trim().to_lowercase();
+            if data_sha1.is_none() && lower.starts_with("data sha1:") {
+                let h = lower["data sha1:".len()..].trim().to_string();
+                if !h.is_empty() { data_sha1 = Some(h); }
+            } else if chd_sha1.is_none() {
+                if lower.starts_with("chd sha1:") {
+                    let h = lower["chd sha1:".len()..].trim().to_string();
+                    if !h.is_empty() { chd_sha1 = Some(h); }
+                } else if lower.starts_with("sha1:") {
+                    let h = lower["sha1:".len()..].trim().to_string();
+                    if !h.is_empty() { chd_sha1 = Some(h); }
                 }
             }
         }
-        Err("SHA1 not found in chdman info output".to_string())
+
+        let mut result = Vec::new();
+        if let Some(h) = data_sha1 { result.push(h); }
+        if let Some(h) = chd_sha1  { result.push(h); }
+        if result.is_empty() {
+            Err("SHA1 not found in chdman info output".to_string())
+        } else {
+            Ok(result)
+        }
     })
     .await
     .map_err(|e| e.to_string())?
@@ -809,6 +870,8 @@ pub fn run() {
             get_file_size,
             detect_chd_type,
             scan_dat_folder,
+            get_dat_folder,
+            save_dat_paths,
             parse_dat,
             hash_file,
             get_chd_data_sha1,
