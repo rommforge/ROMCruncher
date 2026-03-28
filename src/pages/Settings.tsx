@@ -87,11 +87,23 @@ export default function Settings() {
           required
         />
 
-        {chdmanVersion && (
-          <div className="alert alert-info" style={{ marginTop: 10 }}>
-            ℹ {chdmanVersion}
-          </div>
-        )}
+        {chdmanVersion && (() => {
+          const match = chdmanVersion.match(/\b0\.(\d+)\b/);
+          const minor = match ? parseInt(match[1], 10) : null;
+          const tooOld = minor !== null && minor < 264;
+          return (
+            <>
+              <div className={`alert alert-${tooOld ? "warning" : "info"}`} style={{ marginTop: 10 }}>
+                {tooOld ? "⚠" : "ℹ"} {chdmanVersion}
+              </div>
+              {tooOld && (
+                <div className="alert alert-warning" style={{ marginTop: 6 }}>
+                  ⚠ Version 0.264 or newer is required. Older versions are not compatible with MAME Redump DATs.
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <div className="settings-card">
