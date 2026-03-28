@@ -8,19 +8,25 @@ export interface DatMatch {
   datFile: string;
 }
 
+export type DatType = "disc" | "chd" | "mixed";
+
 export interface DatInfo {
   filePath: string;
   fileName: string;
   headerName: string;
   headerVersion: string;
   entryCount: number;
+  datType: DatType;
+  discEntryCount: number;
+  chdEntryCount: number;
 }
 
 // Keys are lowercase SHA1 or CRC32 hex strings.
 export type DatIndex = Map<string, DatMatch>;
 
 interface DatContextValue {
-  datIndex: DatIndex;
+  discDatIndex: DatIndex;
+  chdDatIndex: DatIndex;
   datInfos: DatInfo[];
   parseErrors: string[];
   loading: boolean;
@@ -31,7 +37,8 @@ interface DatContextValue {
 }
 
 const DatContext = createContext<DatContextValue>({
-  datIndex: new Map(),
+  discDatIndex: new Map(),
+  chdDatIndex: new Map(),
   datInfos: [],
   parseErrors: [],
   loading: false,
@@ -47,7 +54,8 @@ interface ParsedDat { header_name: string; header_version: string; games: DatGam
 interface Settings { chdman_path: string; theme: string; dat_extra_paths: string[] }
 
 export function DatProvider({ children }: { children: ReactNode }) {
-  const [datIndex, setDatIndex]         = useState<DatIndex>(new Map());
+  const [discDatIndex, setDiscDatIndex] = useState<DatIndex>(new Map());
+  const [chdDatIndex,  setChdDatIndex]  = useState<DatIndex>(new Map());
   const [datInfos, setDatInfos]         = useState<DatInfo[]>([]);
   const [parseErrors, setParseErrors]   = useState<string[]>([]);
   const [loading, setLoading]           = useState(false);
@@ -57,7 +65,8 @@ export function DatProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const paths = await invoke<string[]>("scan_dat_folder");
-      const index: DatIndex = new Map();
+      const discIndex: DatIndex = new Map();
+      const chdIndex:  DatIndex = new Map();
       const infos: DatInfo[] = [];
       const errors: string[] = [];
 
@@ -65,7 +74,8 @@ export function DatProvider({ children }: { children: ReactNode }) {
         try {
           const parsed = await invoke<ParsedDat>("parse_dat", { path: p });
           const fileName = basename(p);
-          let count = 0;
+          let discCount = 0;
+          let chdCount  = 0;
           for (const game of parsed.games) {
             for (const rom of game.roms) {
               const match: DatMatch = {
@@ -73,23 +83,34 @@ export function DatProvider({ children }: { children: ReactNode }) {
                 romName:  rom.name,
                 datFile:  fileName,
               };
-              if (rom.sha1) { index.set(rom.sha1.toLowerCase(), match); count++; }
-              if (rom.crc)  { index.set(rom.crc.toLowerCase(),  match); }
+              if (rom.is_disk) {
+                if (rom.sha1) { chdIndex.set(rom.sha1.toLowerCase(), match); chdCount++; }
+              } else {
+                if (rom.sha1) { discIndex.set(rom.sha1.toLowerCase(), match); discCount++; }
+                if (rom.crc)  { discIndex.set(rom.crc.toLowerCase(),  match); }
+              }
             }
           }
+          const datType: DatType =
+            discCount > 0 && chdCount > 0 ? "mixed" :
+            chdCount  > 0                  ? "chd"   : "disc";
           infos.push({
-            filePath:      p,
+            filePath:       p,
             fileName,
-            headerName:    parsed.header_name || fileName,
-            headerVersion: parsed.header_version,
-            entryCount:    count,
+            headerName:     parsed.header_name || fileName,
+            headerVersion:  parsed.header_version,
+            entryCount:     discCount + chdCount,
+            datType,
+            discEntryCount: discCount,
+            chdEntryCount:  chdCount,
           });
         } catch (e) {
           errors.push(`${basename(p)}: ${String(e)}`);
         }
       }
 
-      setDatIndex(index);
+      setDiscDatIndex(discIndex);
+      setChdDatIndex(chdIndex);
       setDatInfos(infos);
       setParseErrors(errors);
     } catch {
@@ -129,7 +150,7 @@ export function DatProvider({ children }: { children: ReactNode }) {
   }, [refreshDats]);
 
   return (
-    <DatContext.Provider value={{ datIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath }}>
+    <DatContext.Provider value={{ discDatIndex, chdDatIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath }}>
       {children}
     </DatContext.Provider>
   );

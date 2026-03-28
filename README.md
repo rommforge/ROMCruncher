@@ -75,7 +75,8 @@ ROMCruncher draws heavy inspiration from:
 ROMCruncher would not be possible without:
 
 - [MAME](https://github.com/mamedev/mame/) — the source of `chdman`, the engine that powers all CHD operations
-- [MAMERedump](https://github.com/MetalSlug/MAMERedump) — the DAT resources that make disc image auditing possible
+- [Redump](http://redump.org/) - the DAT resource that makes disc image auditing possible
+- [MAMERedump](https://github.com/MetalSlug/MAMERedump) — the DAT resource that makes .chd file auditing possible
 
 ## Tech Stack
 

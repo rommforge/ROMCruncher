@@ -8,7 +8,7 @@ import { type ReportEntry } from "../components/JobReport";
 import { useDat, type DatInfo } from "../context/DatContext";
 
 export default function AuditPage() {
-  const { datIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath } = useDat();
+  const { discDatIndex, chdDatIndex, datInfos, parseErrors, loading, refreshDats, datExtraPaths, addDatPath, removeDatPath } = useDat();
 
   const [filePaths, setFilePaths] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -73,13 +73,13 @@ export default function AuditPage() {
       let match;
       if (isChd) {
         const sha1s = await invoke<string[]>("get_chd_data_sha1", { path: filePath });
-        match = sha1s.reduce<ReturnType<typeof datIndex.get>>((m, s) => m ?? datIndex.get(s), undefined);
+        match = sha1s.reduce<ReturnType<typeof chdDatIndex.get>>((m, s) => m ?? chdDatIndex.get(s), undefined);
       } else {
         const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
         setJobProgress(0);
         try {
           const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
-          match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+          match = discDatIndex.get(hashes.sha1) ?? discDatIndex.get(hashes.crc32);
         } finally {
           unlistenHash();
           setJobProgress(null);
@@ -93,7 +93,7 @@ export default function AuditPage() {
   }
 
   async function handleRunAudit() {
-    if (datIndex.size === 0) return;
+    if (discDatIndex.size === 0 && chdDatIndex.size === 0) return;
     cancelledRef.current = false;
     setRunning(true);
     setLines([]);
@@ -188,16 +188,50 @@ export default function AuditPage() {
             No DAT files found. Use <strong>+ Add File</strong> or <strong>+ Add Folder</strong> above, or place <code>.dat</code>/<code>.xml</code> files in the <code>dat/</code> folder next to the app.
           </p>
         )}
-        {datInfos.length > 0 && (
-          <div className="audit-dat-list">
-            {datInfos.map((d: DatInfo) => (
-              <div key={d.filePath} className="audit-dat-item">
-                <span className="audit-dat-name">{d.headerName || d.fileName}</span>
-                <span className="audit-dat-meta">{d.entryCount.toLocaleString()} entries · {d.headerVersion || "no version"}</span>
+        {datInfos.length > 0 && (() => {
+          const discDatInfos = datInfos.filter((d) => d.datType === "disc" || d.datType === "mixed");
+          const chdDatInfos  = datInfos.filter((d) => d.datType === "chd"  || d.datType === "mixed");
+          return (
+            <div className="audit-dat-sections">
+              <div className="audit-dat-section">
+                <div className="audit-dat-section-header">
+                  Disc Image DATs
+                  <span className="audit-dat-section-count">{discDatInfos.length}</span>
+                </div>
+                {discDatInfos.length === 0 ? (
+                  <p className="audit-dat-section-empty">None loaded</p>
+                ) : (
+                  <div className="audit-dat-list">
+                    {discDatInfos.map((d: DatInfo) => (
+                      <div key={d.filePath} className="audit-dat-item">
+                        <span className="audit-dat-name">{d.headerName || d.fileName}</span>
+                        <span className="audit-dat-meta">{d.discEntryCount.toLocaleString()} entries · {d.headerVersion || "no version"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        )}
+              <div className="audit-dat-section">
+                <div className="audit-dat-section-header">
+                  CHD DATs
+                  <span className="audit-dat-section-count">{chdDatInfos.length}</span>
+                </div>
+                {chdDatInfos.length === 0 ? (
+                  <p className="audit-dat-section-empty">None loaded</p>
+                ) : (
+                  <div className="audit-dat-list">
+                    {chdDatInfos.map((d: DatInfo) => (
+                      <div key={d.filePath} className="audit-dat-item">
+                        <span className="audit-dat-name">{d.headerName || d.fileName}</span>
+                        <span className="audit-dat-meta">{d.chdEntryCount.toLocaleString()} entries · {d.headerVersion || "no version"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* File picker */}
@@ -229,7 +263,7 @@ export default function AuditPage() {
           <button
             className="btn btn-primary"
             onClick={handleRunAudit}
-            disabled={filePaths.length === 0 || datIndex.size === 0}
+            disabled={filePaths.length === 0 || (discDatIndex.size === 0 && chdDatIndex.size === 0)}
           >
             ▶ Audit {filePaths.length > 1 ? `All (${filePaths.length})` : ""}
           </button>
@@ -242,7 +276,7 @@ export default function AuditPage() {
         {running && progress.total > 1 && (
           <span className="batch-progress">{progress.done} / {progress.total}</span>
         )}
-        {datIndex.size === 0 && !loading && (
+        {discDatIndex.size === 0 && chdDatIndex.size === 0 && !loading && (
           <span className="audit-no-dat-warn">No DATs loaded — add DAT files to the dat/ folder</span>
         )}
       </div>

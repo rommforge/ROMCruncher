@@ -61,20 +61,20 @@ export default function ExtractCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
-  const { datIndex } = useDat();
+  const { discDatIndex } = useDat();
   const cancelledRef = useRef(false);
   const [force, setForce]       = useState(false);
   const [splitBin, setSplitBin] = useState(false);
 
   async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
-    if (datIndex.size === 0) return { datStatus: "skipped" };
+    if (discDatIndex.size === 0) return { datStatus: "skipped" };
     try {
       setProgressLabel("Verifying…");
       const unlistenHash = await listen<number>("hash-progress", (e) => setJobProgress(e.payload));
       setJobProgress(0);
       try {
         const hashes = await invoke<{ sha1: string; crc32: string }>("hash_file", { path: filePath });
-        const match = datIndex.get(hashes.sha1) ?? datIndex.get(hashes.crc32);
+        const match = discDatIndex.get(hashes.sha1) ?? discDatIndex.get(hashes.crc32);
         if (match) {
           setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
           return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };
@@ -227,7 +227,7 @@ export default function ExtractCHD() {
     }
 
     if (reportEntries.length > 1) {
-      setLines((prev) => [...prev, ...buildReportLines(reportEntries, datIndex.size > 0)]);
+      setLines((prev) => [...prev, ...buildReportLines(reportEntries, discDatIndex.size > 0)]);
     }
     setRunning(false);
     setExitStatus(allOk ? "success" : "error");

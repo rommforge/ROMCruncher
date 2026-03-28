@@ -87,7 +87,7 @@ export default function CreateCHD() {
   const [progressLabel, setProgressLabel] = useState("");
   const [exitStatus, setExitStatus] = useState<"success" | "error" | null>(null);
 
-  const { datIndex } = useDat();
+  const { chdDatIndex } = useDat();
   const cancelledRef = useRef(false);
   const setOpt = (k: string, v: string) => setOpts((p) => ({ ...p, [k]: v }));
 
@@ -96,12 +96,12 @@ export default function CreateCHD() {
   }
 
   async function checkDat(filePath: string): Promise<Pick<ReportEntry, "datStatus" | "gameName" | "datFile">> {
-    if (datIndex.size === 0) return { datStatus: "skipped" };
+    if (chdDatIndex.size === 0) return { datStatus: "skipped" };
     try {
       setProgressLabel("Verifying…");
       setJobProgress(null);
       const sha1s = await invoke<string[]>("get_chd_data_sha1", { path: filePath });
-      const match = sha1s.reduce<ReturnType<typeof datIndex.get>>((m, s) => m ?? datIndex.get(s), undefined);
+      const match = sha1s.reduce<ReturnType<typeof chdDatIndex.get>>((m, s) => m ?? chdDatIndex.get(s), undefined);
       if (match) {
         setLines((prev) => [...prev, { stream: "success", line: `→ DAT: ✓ ${match.gameName} [${match.datFile}]` }]);
         return { datStatus: "match", gameName: match.gameName, datFile: match.datFile };
@@ -241,7 +241,7 @@ export default function CreateCHD() {
     }
 
     if (reportEntries.length > 1) {
-      setLines((prev) => [...prev, ...buildReportLines(reportEntries, datIndex.size > 0)]);
+      setLines((prev) => [...prev, ...buildReportLines(reportEntries, chdDatIndex.size > 0)]);
     }
     setRunning(false);
     setExitStatus(allOk ? "success" : "error");
